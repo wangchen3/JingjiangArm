@@ -193,7 +193,7 @@ static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
 static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 							REAL rPrecMm, INT iDn)
 {
-	INT i, j, k, n, nKept, dn, markW, halfBase, BL;
+	INT i, j, k, n, nKept, dn, markW, BL;
 	INT lwS, lwE, rwS, rwE;
 	REAL sigma, mf, mb, mMin, si, jp, arg, mad, thr;
 	REAL f25, b25, f75, b75, scope, df, db, bm;
@@ -228,7 +228,6 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	if (markW <= 0) return;
 	/* K(0.8mm脚部安全边)取消|2026.11.12用户决策: W25外扩本身已覆盖标记脚部,
 	 * 叠加K属冗余,窄门工况每侧白白损失0.8mm空白;排除区半宽=25%标宽 */
-	halfBase = markW;
 	BL = (INT)(2.77f / rPrecMm + 0.5f);/* 2.77mm物理带宽换算为块长 */
 	if (BL < 16) BL = 16;
 	if (BL > KS_CONF_QN_BLK_MAX) BL = KS_CONF_QN_BLK_MAX;
@@ -238,17 +237,20 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	 * |Yang.zj+噪声窗对称 2026.11.10.110543;
 	 * 边界只做越界钳位,不再"放不下整块则整窗置空"——放不下整块的侧由
 	 * 下方"每侧保底一块"补残块|2026.11.12用户决策 */
+	/* 边界取整与Python同口径:int(f25-W25浮点)整体取整,而非各自取整再相减|2026.11.12 */
 	lwS = 0;
-	lwE = (INT)f25 - halfBase;
+	lwE = (INT)(f25 - (b25 - f25));
 	if (lwE < lwS) lwE = lwS;
-	rwS = (INT)b25 + halfBase;
+	rwS = (INT)(b25 + (b25 - f25));
 	if (rwS < 0) rwS = 0;
 	rwE = dn;
 	if (rwS > rwE) rwS = rwE;
 
-	/* 分块去趋势:每块取中位数,偏差从块中位数算 */
+	/* 分块去趋势:每块取中位数,偏差从块中位数算;
+	 * 左窗块自排除边向左铺(与Python双端同步镜像一致,原从门首向右|2026.11.12),
+	 * 逐块独立减中位,块相位对σ数值本不敏感,此为逐位对齐 */
 	n = 0;
-	for (i = lwS; i + BL <= lwE && n + BL <= KS_CONF_QN_MAXPT; i += BL)
+	for (i = lwE - BL; i >= lwS && n + BL <= KS_CONF_QN_MAXPT; i -= BL)
 	{
 		for (j = 0; j < BL; j++) s_afQnBlk[j] = (REAL)d->auiFSampData_Filtered[c][i + j];
 		for (j = 1; j < BL; j++)/* 插入排序取中位数(块长≤256) */
