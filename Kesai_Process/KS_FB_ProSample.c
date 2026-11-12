@@ -25,6 +25,15 @@ StCalcParam_Out stStCalcParam_Out;
 //飞点剔除输入明细
 StPickOutFakePointIn stStPickOutFakePointIn;
 
+//置信度耗时实测探针(DWT周期计数@100MHz,读数×10ns=耗时)|置信度耗时实测探针 2026.11.12
+//调试器Live Expressions实时查看(核心不停机):dwConfErrCyc=最近一圈,dwConfErrCycMax=历史最坏
+volatile DWORD dwConfErrCyc = 0;
+volatile DWORD dwConfErrCycMax = 0;
+//Cortex-M4 DWT直址访问(不依赖头文件包含链):DEMCR.TRCENA(bit24)使能跟踪,DWT_CTRL(bit0)启动计数
+#define KS_DEMCR		(*(volatile DWORD *)0xE000EDFCu)
+#define KS_DWT_CTRL		(*(volatile DWORD *)0xE0001000u)
+#define KS_DWT_CYCCNT	(*(volatile DWORD *)0xE0001004u)
+
 //2026.4.21.153614  屏蔽新算法的使用
 //StCalcParam_Use_New stStCalcParam_Use_New;
 
@@ -354,7 +363,22 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 				//信号源为本圈stStCalcParam_Out的detail结构,详见ks_conf_err.c文件头)
 				//开关关闭时照常计算并刷新置信度记录变量,只有上报误差替换受开关控制
 				//|wang.c+双置信度融合 2026.11.9.165510
-				KS_ConfErr_Process(i_pstStAxisParam, &stStCalcParam_In, &stStCalcParam_Out);
+				//DWT探针包住调用测每圈耗时:周期数×10ns=毫秒数(如1460000→14.6ms),
+				//首次进入使能DEMCR.TRCENA+CYCCNTENA后自由运行,核心不停机|2026.11.12
+				{
+					static BYTE xDwtEn = 0;
+					DWORD dwCyc0;
+					if (!xDwtEn)
+					{
+						KS_DEMCR |= (1UL << 24);	/* DEMCR.TRCENA=1:使能DWT */
+						KS_DWT_CTRL |= 1UL;			/* DWT_CTRL.CYCCNTENA=1:计数器启动 */
+						xDwtEn = 1;
+					}
+					dwCyc0 = KS_DWT_CYCCNT;
+					KS_ConfErr_Process(i_pstStAxisParam, &stStCalcParam_In, &stStCalcParam_Out);
+					dwConfErrCyc = KS_DWT_CYCCNT - dwCyc0;
+					if (dwConfErrCyc > dwConfErrCycMax) dwConfErrCycMax = dwConfErrCyc;
+				}
 
 				if(i_pstStAxisParam->xFlag_Gate_double)
 				{
