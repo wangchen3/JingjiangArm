@@ -54,7 +54,11 @@
 #define KS_CONF_GETBIT16(w,b)	((BYTE)(((WORD)(w)>>(b))&0x0001))
 
 /* ---------------- 全局开关/变量(定义,声明见ks_conf_err.h) ---------------- */
-BYTE xEnableConfErr = 0;	 /* 默认0=原每圈算一个误差(默认行为与现状完全一致) */
+BYTE xEnableConfErr = 0;	 /* 置信度观察开关(46059.03)|=1计算并显示置信度(6206),误差链仍用
+							 * 原每圈值|=0完全原行为(默认)|开关语义解耦:仅显示不接入误差链 2026.11.12 */
+BYTE xSwitchWrEn = 0;		 /* 置信度接入误差链开关(46059.04)|仅在xEnableConfErr=1时有效:再=1
+							 * 融合误差才替换上报o_iVResult/o_iHResult|=0只显示不接入(默认)
+							 * |开关语义解耦:双开才接入 2026.11.12 */
 REAL rConfS50Mm = 0.08f;	 /* s50默认0.08mm|wang.c+双置信度融合 2026.11.9.165510 */
 REAL rConfLastRevV = 0.0f;	/* 纵向每圈融合置信度记录0~100 */
 REAL rConfLastRevH = 0.0f;	/* 横向每圈融合置信度记录0~100 */

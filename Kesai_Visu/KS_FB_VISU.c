@@ -34,11 +34,14 @@
  *   屏→ARM(读区维持6000~6059不扩,读长度0x3C):
  *     MCGS46059(协议6058)=编码器/开关共用位区:低8位=RX_BUFF[120],
  *        bit0=横向编码器有效|bit1=横向电机报警(原有)|
- *        bit2=飞点开关xFlyRemoveEn(1=新Theil-Sen剔除默认|0=回退旧二阶差分)|
- *        bit3=置信度开关xConfErrEn(1=上报双置信度融合误差)|bit4=下发使能xSwitchWrEn
- *        ——bit4=0忽略bit2/bit3写入:屏幕未配置读回0,保护ARM默认行为(飞点=1/置信度=0)
+ *        bit2=飞点独立开关xFlyRemoveEn(1=新Theil-Sen剔除ARM默认|0=回退旧二阶差分),
+ *            翻转由ks_fly_remove内部检测并自动复位,不经过任何使能位|
+ *        bit3=置信度观察开关xConfErrEn(1=计算并显示置信度6206,误差链仍用原每圈值|0=完全原行为)|
+ *        bit4=接入开关xSwitchWrEn(仅bit3=1时有效:再=1融合误差才替换上报误差链,
+ *            "只显示不接入"中间态供随时观察/随时回退)
+ *        ——2026.11.12语义解耦:原"bit4一刀切门控bit2/bit3写入"方案已废弃
  *     MCGS4WUB6060(协议6059)=s50输入wConfS50,单位0.001mm(20=0.02mm),
- *        有效范围1~1000,越界保持原值,下一圈生效——0x3C覆盖的最后一个寄存器
+ *        有效范围1~1000,越界保持原值,bit3=1时才写入,下一圈生效——0x3C覆盖的最后一个寄存器
  *   ARM→屏(写其他帧,随每个通讯循环约600ms刷新,改版不影响):
  *     协议6206(MCGS 6207)=高8位纵向融合置信度F(0~100)|低8位横向F(0~100)
  *                          (原奥特马递墨辊自动频率2025.10起已注释弃用,寄存器释放使用)
@@ -1131,24 +1134,27 @@ void KS_FB_VISU(
 				//双置信度/飞点开关位与s50输入解析(2026.11.11组态屏改版:开关并入46059编码器
 				//位区,s50用4WUB6060;读命令维持0x3C不扩——0x3C读协议6000~6059=MCGS6001~6060,
 				//46059/6060均在范围内,MCGS寄存器R(=协议R-1,k=R-6001)占RX_BUFF[2R-11999]高+[2R-11998]低);
-				//开关位与编码器同字节:46059低8位=RX_BUFF[120],bit2=飞点|bit3=置信度|bit4=下发
-				//使能(=0忽略位写入——屏幕未配置读回0,保护ARM默认行为飞点=1/置信度=0);
-				//s50=4WUB6060→[121,122],单位0.001mm,范围1~1000,越界保持原值,写入下一圈生效;
+				//开关语义(2026.11.12解耦,飞点/置信度互不耦合,原bit4一刀切门控方案废弃):
+				//  bit2=飞点独立开关:1=新Theil-Sen剔除(ARM默认)|0=回退旧二阶差分,翻转由
+				//       ks_fly_remove内部检测并自动复位剔除器,不经过任何使能位;
+				//  bit3=置信度观察开关:1=计算并显示置信度(6206),误差链仍用原每圈值|0=完全原行为;
+				//  bit4=接入开关:仅在bit3=1时有效,再=1融合误差才替换上报误差链——
+				//       "只显示不接入"中间态供随时观察/随时回退;
+				//s50=4WUB6060→[121,122],单位0.001mm,范围1~1000,越界保持原值,bit3=1时才写入,下一圈生效;
 				//短帧(双向参数0x28读)时这些字节为上一帧0x3C读的原值,重复赋值幂等无害
 				//——与上方编码器解析同模式|wang.c+双置信度融合 2026.11.10.090134|组态屏改版适配 2026.11.11
+				//|开关语义解耦:飞点独立/置信度仅显示/双开才接入 2026.11.12
 				{
 					BYTE bySwitchBits_RX;
 					WORD wConfS50_RX;
 					bySwitchBits_RX = RS485_RX_BUFF[120];//MCGS46059低8位(bit0/1编码器原有,bit2/3/4开关)
 					wConfS50_RX = ((WORD)(RS485_RX_BUFF[121]) << 8) + (WORD)(RS485_RX_BUFF[122]);//MCGS4WUB6060=s50输入
-					if (GetBit(bySwitchBits_RX, 4))//屏幕写入了使能位(xSwitchWrEn)才生效
+					xEnableNewFlyRemove = GetBit(bySwitchBits_RX, 2);//飞点独立生效:1=新Theil-Sen剔除|0=旧二阶差分(翻转由ks_fly_remove内部检测复位)
+					xEnableConfErr = GetBit(bySwitchBits_RX, 3);//置信度观察:1=计算+显示(6206),不接入误差链|0=完全原行为
+					xSwitchWrEn = GetBit(bySwitchBits_RX, 4);//接入开关:bit3&bit4同开才把融合误差接入上报误差链(见KS_FB_ProSample)
+					if (xEnableConfErr && wConfS50_RX >= 1 && wConfS50_RX <= 1000)
 					{
-						xEnableNewFlyRemove = GetBit(bySwitchBits_RX, 2);//飞点开关:1=新Theil-Sen剔除(默认)|0=回退旧二阶差分(翻转触发剔除器复位)
-						xEnableConfErr = GetBit(bySwitchBits_RX, 3);//置信度开关:1=上报双置信度融合误差|0=原每圈算一个(默认)
-						if (wConfS50_RX >= 1 && wConfS50_RX <= 1000)
-						{
-							rConfS50Mm = (REAL)wConfS50_RX / 1000.0f;//s50输入mm(s=s50时CK置信度C=50%)
-						}
+						rConfS50Mm = (REAL)wConfS50_RX / 1000.0f;//s50输入mm(s=s50时CK置信度C=50%)
 					}
 				}
 
@@ -1838,13 +1844,21 @@ void KS_FB_VISU(
 				//aReturn[0] = (WORD)(INT)i_pstStAxisParam->rAxisRoller_Frq;																//2021.10.28.172518奥特马占用|当前递墨辊自动频率
 				//6206=置信度显示(高8位纵向F|低8位横向F,0~100四舍五入钳位,随每个通讯循环约600ms
 				//刷新;屏侧wConfPack拆字节显示:纵向F=wConfPack/256,横向F=wConfPack%256;
-				//原奥特马递墨辊自动频率已弃用,寄存器释放使用)|wang.c+开关通讯接入 2026.11.10.160000
-				temp = (WORD)(INT)(rConfLastRevV + 0.5f);
-				if (temp > 100) temp = 100;
-				aReturn[0] = (WORD)(temp << 8);
-				temp = (WORD)(INT)(rConfLastRevH + 0.5f);
-				if (temp > 100) temp = 100;
-				aReturn[0] += temp;
+				//观察开关bit3=1才显示,bit3=0填0(完全原行为);原奥特马递墨辊自动频率已弃用,
+				//寄存器释放使用)|wang.c+开关通讯接入 2026.11.10.160000|仅bit3=1显示 2026.11.12
+				if (xEnableConfErr)
+				{
+					temp = (WORD)(INT)(rConfLastRevV + 0.5f);
+					if (temp > 100) temp = 100;
+					aReturn[0] = (WORD)(temp << 8);
+					temp = (WORD)(INT)(rConfLastRevH + 0.5f);
+					if (temp > 100) temp = 100;
+					aReturn[0] += temp;
+				}
+				else
+				{
+					aReturn[0] = 0;//bit3=0:置信度不可见,回到原行为
+				}
 				//6207
 				//2020.5.30.144755|发送版周长和套色标记
 				aReturn[1] = (WORD)(INT)(i_pstStAxisParam->lrGirth);

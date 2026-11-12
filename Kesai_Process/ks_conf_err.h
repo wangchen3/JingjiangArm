@@ -28,12 +28,17 @@
 #include "base.h"
 #include "calcerr.h"
 
-/* 运行时开关(默认值编译在ks_conf_err.c,485组态屏下发待接入:见KS_FB_VISU.c顶部待加代码区) */
-extern BYTE xEnableConfErr;		/* 置信度误差计算开关|=1上报双置信度融合误差(替换o_iVResult/o_iHResult)
-								 *|=0原每圈算一个误差(默认)|wang.c+双置信度融合 2026.11.9.165510 */
+/* 运行时开关(默认值编译在ks_conf_err.c,485组态屏46059.03/.04下发,见KS_FB_VISU.c解析) */
+extern BYTE xEnableConfErr;		/* 置信度观察开关(46059.03)|=1计算并显示置信度(6206)——误差链仍用
+								 * 原每圈值,不接入融合结果|=0完全原行为(默认)
+								 *|wang.c+双置信度融合 2026.11.9.165510
+								 *|开关语义解耦:仅显示不接入误差链 2026.11.12 */
+extern BYTE xSwitchWrEn;		/* 置信度接入误差链开关(46059.04)|仅在xEnableConfErr=1时有效:
+								 * 再=1融合误差替换上报o_iVResult/o_iHResult|=0只显示不接入(默认)
+								 * |开关语义解耦:双开才接入 2026.11.12 */
 
 /* 参数输入变量 */
-extern REAL rConfS50Mm;			/* CK一致度尺度s50输入@mm|默认0.02,s=s50时C=50%,写入后下一圈生效
+extern REAL rConfS50Mm;			/* CK一致度尺度s50输入@mm|默认0.08,s=s50时C=50%,写入后下一圈生效
 								 *|wang.c+双置信度融合 2026.11.9.165510 */
 
 /* 每圈置信度记录变量(0~100,有效圈刷新,丢失圈保持上次值便于观测) */

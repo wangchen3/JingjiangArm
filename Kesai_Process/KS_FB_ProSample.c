@@ -549,10 +549,12 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 //			}
 //			else
 //			{
-			//置信度误差开关(xEnableConfErr,ks_conf_err.h):1=上报双置信度融合误差
-			//(F=√(C×Qn)几何平均加权混合,丢失哨兵-32768直通与老链口径一致)|0=原每圈算一个误差
+			//置信度误差接入(xEnableConfErr+xSwitchWrEn,ks_conf_err.h):bit3&bit4同开才上报
+			//双置信度融合误差(F=√(C×Qn)几何平均加权混合,丢失哨兵-32768直通与老链口径一致);
+			//仅bit3=1只显示不接入(观察态,误差链仍用原每圈值),bit3=0完全原行为
 			//|wang.c+双置信度融合 2026.11.9.165510|融合改开根号 2026.11.9.172950
-			if(xEnableConfErr)
+			//|开关语义解耦:双开才接入误差链 2026.11.12
+			if(xEnableConfErr && xSwitchWrEn)
 			{
 				i_pstStPara_PduBroadcastUp->iVerror= KS_ConfErr_GetV();
 			}
@@ -589,8 +591,9 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 //			}
 //			else
 //			{
-			//置信度误差开关:横向,同纵向|wang.c+双置信度融合 2026.11.9.165510
-			if(xEnableConfErr)
+			//置信度误差接入:横向,同纵向(双开才接入)|wang.c+双置信度融合 2026.11.9.165510
+			//|开关语义解耦:双开才接入误差链 2026.11.12
+			if(xEnableConfErr && xSwitchWrEn)
 			{
 				i_pstStPara_PduBroadcastUp->iHerror= KS_ConfErr_GetH();
 			}
