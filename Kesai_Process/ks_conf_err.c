@@ -41,6 +41,11 @@
 #define KS_CONF_QN_KEEP_RATIO	0.6f	/* 离群剔除后最少保留比例 */
 #define KS_CONF_QN_MAXPT		3000	/* 噪声残差缓冲上限@同detail滤波数组维度 */
 #define KS_CONF_QN_BLK_MAX		256	/* 分块尺寸上限@块排序缓冲维度 */
+#define KS_CONF_QN_QUANT		4.0f	/* 精采样数据量化码@LSB(实测数据为4的整倍数):MAD/σ下限
+									 * 治本2026.11.12——空白区"钉零+稀疏量化毛刺"型噪声下,原0.5下限
+									 * 使MAD塌底→剔除阈值仅2.6LSB→毛刺全体被判离群→保留率<60%整窗误拒;
+									 * 下限提到1个量化码后阈值≈20.8LSB,毛刺回归噪声身份,窗口正常通过,
+									 * σ可实测(连续噪声工况σ>4,下限不参与,行为不变) */
 #define KS_CONF_QN_SCOPE_MIN	3000.0f	/* 有效幅值门槛@LSB:低于此沿过缓,宽度测量随机精度
 									 * 无意义→Qn置满分(质量单靠CK);仅作用于Qn,与CK无关
 									 * |Yang.zj+ 2026.11.10.110543(110543版误加CK记忆门槛,112204撤销) */
@@ -171,6 +176,11 @@ static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
  * σ=1.4826×中位数;斜率m=0.5×幅值/(25%→75%沿跨度)取前后沿较小;
  * jp=2σ·si/m_min(si=精度×100丝/点),Qn=100·erf(τ/(√2·jp)),arg>3直接100
  * 有效幅值<KS_CONF_QN_SCOPE_MIN(3000)时Qn直接置满分不进噪声链(见函数内)
+ * 【治本】2026.11.12: MAD/σ下限0.5→KS_CONF_QN_QUANT(1个量化码)——空白区"钉零+稀疏
+ * 量化毛刺"型噪声下原下限致MAD塌底→阈值2.6LSB→毛刺全判离群→整窗误拒(实测数据
+ * rev1-4/rev6命中);下限提高后毛刺回归噪声身份,窗口通过,σ可实测;
+ * 其余"评不了"分支(沿无效/点数不足/剔除拒绝/斜率不可估等)保持原有无效语义(-1→F=0冻结)
+ * |2026.11.12用户决策:异常置满分的方案已回退,采用量化下限治本
  * σ在3点滤波后数据上计算为既定口径(2026-11-10确认:白噪声工况较原始口径偏乐观,接受)
  * 老链口径:交点位置0基门内点数无需opt的-1;25%档=索引1,75%档=索引2
  * |wang.c+双置信度融合 2026.11.9.165510 */
@@ -264,7 +274,7 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	 * |wang.c+双置信度融合 2026.11.9.165510 */
 	ks_conf_sortf(s_afQnResid, n);
 	mad = s_afQnResid[n / 2];
-	if (mad < 0.5f) mad = 0.5f;
+	if (mad < KS_CONF_QN_QUANT) mad = KS_CONF_QN_QUANT;/*量化下限治本2026.11.12,见常量注释*/
 	thr = 3.5f * KS_CONF_MAD_C * mad;
 	nKept = 0;
 	for (i = 0; i < n; i++)
@@ -277,7 +287,7 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 		return;
 	}
 	sigma = KS_CONF_MAD_C * s_afQnResid[nKept / 2];
-	if (sigma < 0.5f) sigma = 0.5f;
+	if (sigma < KS_CONF_QN_QUANT) sigma = KS_CONF_QN_QUANT;/*量化下限治本2026.11.12*/
 
 	/* 斜率:前后沿25%→75%跨度 */
 	df = f75 - f25;

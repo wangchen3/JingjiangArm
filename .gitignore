@@ -26,3 +26,7 @@ bootloader/
 .settings/
 *.launch
 *.cfg
+
+# ===== Python评估工具的缓存与采集数据(脚本本身入库) =====
+__pycache__/
+stationId*.csv
