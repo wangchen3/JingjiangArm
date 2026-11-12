@@ -23,6 +23,10 @@ PAR = dict(
     tau_si=5.0,                      # 可信度公差τ(丝): Q=P(|ΔW|≤τ)
     quant_lsb=4.0,                   # 精采样量化码@LSB(数据为4整倍数): MAD/σ下限
                                      # 治本2026.11.12: 防钉零+量化毛刺噪声下MAD塌底→整窗误拒
+    conf_s50=0.08,                   # CK一致度尺度s50@mm(与ARM rConfS50Mm默认一致): s=s50时C=50%
+                                     # 融合F=√(C×Qn/100), C=2^-(s_mm/s50)²|2026.11.12对齐ARM
+    qn_scope_min=3000.0,             # 低幅门槛@LSB(与ARM KS_CONF_QN_SCOPE_MIN一致): 幅值低于此
+                                     # Qn直接满分100(沿过缓宽度精度无意义,质量单靠CK)|2026.11.12
 )
 
 def smooth3e(x):
@@ -57,6 +61,7 @@ class MarkQuality:
         self.dw75 = dw_init[1] if dw_init else None
         self.dw_frames = 0
         self.sigma_last = None
+        self.prev_mid = None   # 上圈三档交点中线位置{r:pos}(CK参照,坏圈不更新)|2026.11.12
         self.w_prev = None
         self.wjit = None
         self.wjit_base = None
@@ -166,6 +171,18 @@ class MarkQuality:
         for r in (0.5, 0.25, 0.75):
             if widths[r] is not None:
                 fw_w, fw_lvl = widths[r], r; break
+        # CK(ARM ks_conf_note_ck同款): 三档交点中线位置跨圈位移一致性s@点
+        # 任一档无效→本圈s无效且不更新历史(坏圈不污染参照);首圈无参照→无效|2026.11.12
+        mid3 = {r: ((cr[r][0]+cr[r][1])/2.0
+                    if (cr[r][0] is not None and cr[r][1] is not None) else None)
+                for r in (0.25, 0.5, 0.75)}
+        ck_s = None
+        if all(v is not None for v in mid3.values()):
+            if self.prev_mid is not None:
+                d = [mid3[r] - self.prev_mid[r] for r in (0.25, 0.5, 0.75)]
+                m_ = sum(d) / 3.0
+                ck_s = math.sqrt(sum((x - m_) ** 2 for x in d) / 2.0)  # 样本方差÷(3-1)
+            self.prev_mid = dict(mid3)
         # 噪声/SNR(窗口几何=ARM区间1/区间2, seg_off把段内交点换回门内坐标)
         sigma, _npts = self._noise_sigma(gate_pos, c, pitch, cr, margin=margin,
                                          seg_off=c - seg_half)
@@ -180,7 +197,11 @@ class MarkQuality:
         slope_min = None
         if None not in (f25, f75, b25, b75) and (f75-f25) > 1e-6 and (b25-b75) > 1e-6:
             slope_min = min(0.5*scope/(f75-f25), 0.5*scope/(b25-b75))
-        jp = (2.0*sigma/slope_min*self.si) if (slope_min and slope_min > 1) else None
+        # ARM同款口径: 噪声窗无效→jp一并无效(原用回退σ造出假jp假满分,废除)|2026.11.12
+        if noise_inv:
+            jp = None
+        else:
+            jp = (2.0*sigma/slope_min*self.si) if (slope_min and slope_min > 1) else None
         # 沿线性度
         lin = None
         if all3:
@@ -245,10 +266,12 @@ class MarkQuality:
                 q = max(q, 2)
         # ---- 连续可信度 Q∈[0,100] ----
         # 随机项: Qn = P(|ΔW|≤τ) = erf(τ/(jp√2))·100  (jp即宽度测量预测σ)
-        if jp is not None and jp > 0:
+        if scope < PAR["qn_scope_min"]:
+            Qn = 100.0  # 低幅→满分(ARM KS_CONF_QN_SCOPE_MIN同款,质量单靠CK)|2026.11.12
+        elif jp is not None and jp > 0:
             Qn = math.erf(min(PAR["tau_si"] / (jp * math.sqrt(2.0)), 3.0)) * 100.0
         else:
-            Qn = 26.0  # jp=None(slope不可估)→保守(2026.11.12曾改100后回退,治本走quant_lsb下限)
+            Qn = None   # jp不可估→Qn无效(ARM同款:无效→F无效→冻结;"26保守分"废除)|2026.11.12
         # 形状项: logistic, 门限处=50分
         dv = 0.0
         if dev25 is not None: dv = max(dv, abs(dev25))
@@ -267,7 +290,8 @@ class MarkQuality:
         if self.wjit_base is not None and self.wjit is not None:
             thr_w = max(3.0*self.wjit_base, 3.0)
             Qw = 100.0 / (1.0 + (self.wjit / thr_w) ** 4)
-        q_score = Qn * Qd * Ql * Qr * Qw / 100.0**4
+        # Qn可能为None(jp不可估,ARM同款无效语义)→q_score一并无效|2026.11.12
+        q_score = None if Qn is None else Qn * Qd * Ql * Qr * Qw / 100.0**4
         # qBits
         qb = 0
         qb |= min(int(scope/655.35), 127)
@@ -296,7 +320,7 @@ class MarkQuality:
         w50comp = fw_w
         if fw_lvl is not None and fw_lvl != 0.5 and self.dw25 is not None and fw_w is not None:
             w50comp = fw_w - (self.dw25 if fw_lvl == 0.25 else self.dw75)
-        return dict(scope=scope, snr=snr, snr_level=snr_level, sigma=sigma,
+        return dict(scope=scope, snr=snr, snr_level=snr_level, sigma=sigma, ck_s=ck_s,
                     widths={r: (v*self.si if v is not None else None) for r, v in widths.items()},
                     fw_w=fw_w*self.si if fw_w is not None else None, fw_lvl=fw_lvl,
                     dev25=dev25, dev75=dev75, lin=lin, r2=r2, reg_w=reg_w_si,

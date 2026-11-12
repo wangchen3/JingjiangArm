@@ -131,6 +131,7 @@ def run_simulation(filepath, g0, gw, cur_ch, pol, warmup, si_val, girth_val, pit
     m_cur = MarkQuality(si)
     m_fol = MarkQuality(si)
     rows = []
+    fus_prev = None; fus_has = False   # ARM同款IIR融合状态(out_{k-1})|2026.11.12
     warmup_done = False
     warmup_count = 0
     table_rejected = False
@@ -226,22 +227,40 @@ def run_simulation(filepath, g0, gw, cur_ch, pol, warmup, si_val, girth_val, pit
         elif table_rejected:
             status = "表被拒"
 
-        q_fol = r_fol["q_score"] if r_fol else 0
-        qp = min(r_cur["q_score"], q_fol)
+        qc = r_cur.get("q_score")
+        q_fol = (r_fol.get("q_score") if r_fol else None)
+        qp = None if (qc is None or q_fol is None) else min(qc, q_fol)
         jp = r_cur["jp"] if r_cur["jp"] is not None else -1
-        # 简化Q = Qn × Qd / 100 (只用噪声+形状)
-        q_simple = r_cur["Qn"] * r_cur["Qd"] / 100.0
+        # ---- ARM同款融合|2026.11.12: C=2^-(s_mm/s50)²(两标s取max短板), F=√(C×Qn/100),
+        # IIR上报 eV_k = F·E_k + (1-F)·eV_{k-1}; F无效→冻结, 丢失圈直通不更新 ----
+        s_ck = r_cur.get("ck_s"); s_fk = (r_fol.get("ck_s") if r_fol else None)
+        C = None
+        if s_ck is not None and s_fk is not None:
+            s_mm_ck = max(s_ck, s_fk) * si_mm
+            C = 2.0 ** (-(s_mm_ck / mqm.PAR["conf_s50"]) ** 2)
+        Qn_c = r_cur.get("Qn")
+        F = None if (C is None or Qn_c is None) else math.sqrt(C * Qn_c / 100.0)
+        if ev is None:
+            eV_fus = None                       # 丢失哨兵圈: 直通不更新历史
+        elif not fus_has:
+            fus_prev = ev; fus_has = True; eV_fus = ev   # 首个有效圈直通
+        else:
+            if F is not None:                   # F无效→保持上一圈(冻结)
+                fus_prev = F * ev + (1 - F) * fus_prev
+            eV_fus = fus_prev
         rows.append(dict(
             rev=ri, amp=round(r_cur["scope"] / 655.35, 1),
             sigma=round(r_cur["sigma"], 1), snr=round(r_cur["snr"], 1),
             jp=round(jp, 2), w50=round(w_cur, 1) if w_cur is not None else None,
-            Qn=round(r_cur["Qn"], 1), Qd=round(r_cur["Qd"], 1),
-            Q_simple=round(q_simple, 1),
-            Q_full=round(r_cur["q_score"], 1),
+            Qn=(round(Qn_c, 1) if Qn_c is not None else None),
+            ck=(round(C * 100, 1) if C is not None else None),
+            F=(round(F * 100, 1) if F is not None else None),
+            eVf=(round(eV_fus, 1) if eV_fus is not None else None),
+            Q_full=(round(qc, 1) if qc is not None else None),
             qLevel=r_cur["qLevel"],
             eV=round(ev, 1) if ev is not None else None,
             eH=round(eh, 1) if eh is not None else None,
-            Q_pair=round(qp, 1), status=status))
+            Q_pair=(round(qp, 1) if qp is not None else None), status=status))
 
     info = dict(si=si, pitch=pitch, pol=pol, cur=cur_ch, fol=fol_ch,
                 clen=clen, nrev=len(revs), table_done=warmup_done,
@@ -301,9 +320,9 @@ class SimGUI:
         ttk.Button(r3, text="💾 导出CSV", command=self._export).pack(side="left", padx=4)
 
         # ── 结果表格 ──
-        cols = ("rev","amp","sigma","snr","jp","w50","Qn","Qd","Q_simple",
+        cols = ("rev","amp","sigma","snr","jp","w50","Qn","ck","F","eVf",
                 "eV","eH","Q_pair","qLevel","status")
-        heads = ("圈","幅度%","σ","SNR","jp丝","W50丝","Qn","Qd","Q简化",
+        heads = ("圈","幅度%","σ","SNR","jp丝","W50丝","Qn","CK分","F分","eV融合",
                  "eV丝","eH丝","配对Q","级","状态")
         frm2 = ttk.LabelFrame(self.root, text="逐圈结果", padding=4)
         frm2.pack(fill="both", expand=True, padx=8, pady=4)
@@ -665,7 +684,7 @@ class SimGUI:
 
     def _fill_table(self):
         self.tree.delete(*self.tree.get_children())
-        keys = ("rev","amp","sigma","snr","jp","w50","Qn","Qd","Q_simple",
+        keys = ("rev","amp","sigma","snr","jp","w50","Qn","ck","F","eVf",
                 "eV","eH","Q_pair","qLevel","status")
         for row in self.rows:
             vals = []
@@ -678,7 +697,7 @@ class SimGUI:
     def _fill_summary(self):
         ev = [r["eV"] for r in self.rows if r.get("eV") is not None]
         eh = [r["eH"] for r in self.rows if r.get("eH") is not None]
-        q  = [r["Q_simple"] for r in self.rows if "Q_simple" in r]
+        q  = [r["F"] for r in self.rows if r.get("F") is not None]
         info = self.info
         lines = [f"版周={info.get('clen',0)}点×{info.get('nrev',0)}圈  "
                  f"极性={info.get('pol','')}  "
@@ -698,7 +717,7 @@ class SimGUI:
             lines.append("横向eH: 无有效数据")
         if q:
             a = np.array(q)
-            lines.append(f"当前色质量Q(简化=Qn×Qd): 中位={np.median(a):.1f}  范围[{a.min():.1f},{a.max():.1f}]")
+            lines.append(f"融合质量F=√(CK×Qn)@分: 中位={np.median(a):.1f}  范围[{a.min():.1f},{a.max():.1f}]  (CK=跨圈一致性,Qn=宽度精度,与ARM同款)")
         if info.get("table_rejected"):
             lines.append("[!] 建表被拒绝 — 色标可能在暖机期就异常, 请人工确认!")
         elif info.get("table_done"):
@@ -736,7 +755,8 @@ class SimGUI:
         ax2.axhline(0, ls=":", c="gray", lw=.5)
         ax2.set_ylabel("eH(丝)"); ax2.legend(fontsize=9); ax2.grid(alpha=.25)
         ax3 = fig.add_subplot(313)
-        ax3.plot(x, f("Q_simple"), "-o", ms=4, lw=1, color="#c0392b", label="Q简化(Qn×Qd)")
+        ax3.plot(x, f("F"), "-o", ms=4, lw=1, color="#c0392b", label="F融合=√(CK×Qn)")
+        ax3.plot(x, f("ck"), "-s", ms=3, lw=.8, color="#2e8b57", label="CK分", alpha=.8)
         ax3.plot(x, f("Q_pair"), "-s", ms=3, lw=.8, color="#7d3c98", label="配对Q", alpha=.7)
         ax3.axhline(90, ls="--", c="#2e8b57", lw=.8, label="90分良线")
         ax3.axhline(25, ls="--", c="#c0392b", lw=.8, label="25分差线")

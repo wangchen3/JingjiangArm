@@ -87,58 +87,34 @@ static REAL  s_afQnBlk[KS_CONF_QN_BLK_MAX];
 /* ---------------- 工具:浮点排序(快排+小区间插入,ARM上逐圈实时用) ---------------- */
 /* opt桌面版用纯插入排序,ARM上点数上千时O(n²)过慢,改为等价的快速排序(只影响耗时不影响数值)
  * |wang.c+双置信度融合 2026.11.9.165510 */
-static void ks_conf_sortf(REAL* a, INT n)
+/* 快速选择:返回数组第k小(0基)的值,平均O(n)|2026.11.12
+ * 替代原逐块插入排序(O(BL²))与残差全排序(O(n·logn))——中位数取值唯一,
+ * 与算法无关,数值逐位一致(按用户指令:效果相同时优先时间复杂度最小;
+ * DWT实测排序占置信度耗时大头);三点取中枢轴,噪声残差近随机,退化可忽略 */
+static REAL ks_conf_qselect(REAL* a, INT n, INT k)
 {
-	INT iLo, iHi, iMid, i;
+	INT iLo = 0, iHi = n - 1;
 	REAL rPivot, rTmp;
-	INT iStackLo[32], iStackHi[32];/* 显式栈避免递归,深度≤32足够 */
-	INT iSp = 0;
-
-	if (n < 2) return;
-	iStackLo[0] = 0; iStackHi[0] = n - 1; iSp = 1;
-	while (iSp > 0)
+	while (iLo < iHi)
 	{
-		iSp--;
-		iLo = iStackLo[iSp]; iHi = iStackHi[iSp];
-		while (iLo < iHi)
+		INT iMid = iLo + (iHi - iLo) / 2;
+		INT l, h;
+		if (a[iMid] < a[iLo]) { rTmp = a[iLo]; a[iLo] = a[iMid]; a[iMid] = rTmp; }
+		if (a[iHi] < a[iLo]) { rTmp = a[iLo]; a[iLo] = a[iHi]; a[iHi] = rTmp; }
+		if (a[iHi] < a[iMid]) { rTmp = a[iMid]; a[iMid] = a[iHi]; a[iHi] = rTmp; }
+		rPivot = a[iMid];
+		l = iLo; h = iHi;
+		while (l <= h)
 		{
-			if (iHi - iLo < 12)/* 小区间插入排序 */
-			{
-				for (i = iLo + 1; i <= iHi; i++)
-				{
-					rTmp = a[i];
-					INT j = i - 1;
-					while (j >= iLo && a[j] > rTmp) { a[j + 1] = a[j]; j--; }
-					a[j + 1] = rTmp;
-				}
-				break;
-			}
-			iMid = iLo + (iHi - iLo) / 2;
-			rPivot = a[iMid];
-			INT l = iLo, h = iHi;
-			while (l <= h)
-			{
-				while (a[l] < rPivot) l++;
-				while (a[h] > rPivot) h--;
-				if (l <= h)
-				{
-					rTmp = a[l]; a[l] = a[h]; a[h] = rTmp;
-					l++; h--;
-				}
-			}
-			/* 大的一侧入栈,小的一侧继续(栈深度有界) */
-			if (h - iLo > iHi - l)
-			{
-				iStackLo[iSp] = iLo; iStackHi[iSp] = h; iSp++;
-				iLo = l;
-			}
-			else
-			{
-				iStackLo[iSp] = l; iStackHi[iSp] = iHi; iSp++;
-				iHi = h;
-			}
+			while (a[l] < rPivot) l++;
+			while (a[h] > rPivot) h--;
+			if (l <= h) { rTmp = a[l]; a[l] = a[h]; a[h] = rTmp; l++; h--; }
 		}
+		if (k <= h) iHi = h;          /* 第k小在左段 */
+		else if (k >= l) iLo = l;     /* 第k小在右段 */
+		else return a[k];             /* h<k<l: a[k]在等于枢轴的中间带,即为所求 */
 	}
+	return a[k];
 }
 
 /* ---------------- CK:三档交点跨圈位移一致性(移植KSOptNoteCrossings) ----------------
@@ -193,7 +169,7 @@ static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
 static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 							REAL rPrecMm, INT iDn)
 {
-	INT i, j, k, n, nKept, dn, markW, BL;
+	INT i, j, n, nKept, dn, markW, BL;
 	INT lwS, lwE, rwS, rwE;
 	REAL sigma, mf, mb, mMin, si, jp, arg, mad, thr;
 	REAL f25, b25, f75, b75, scope, df, db, bm;
@@ -253,28 +229,14 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	for (i = lwE - BL; i >= lwS && n + BL <= KS_CONF_QN_MAXPT; i -= BL)
 	{
 		for (j = 0; j < BL; j++) s_afQnBlk[j] = (REAL)d->auiFSampData_Filtered[c][i + j];
-		for (j = 1; j < BL; j++)/* 插入排序取中位数(块长≤256) */
-		{
-			REAL key = s_afQnBlk[j];
-			k = j - 1;
-			while (k >= 0 && s_afQnBlk[k] > key) { s_afQnBlk[k + 1] = s_afQnBlk[k]; k--; }
-			s_afQnBlk[k + 1] = key;
-		}
-		bm = s_afQnBlk[BL / 2];
+		bm = ks_conf_qselect(s_afQnBlk, BL, BL / 2);/* 快速选择取上中位,值与原插入排序一致|2026.11.12 */
 		for (j = 0; j < BL; j++)
 			s_afQnResid[n++] = fabsf((REAL)d->auiFSampData_Filtered[c][i + j] - bm);
 	}
 	for (i = rwS; i + BL <= rwE && n + BL <= KS_CONF_QN_MAXPT; i += BL)
 	{
 		for (j = 0; j < BL; j++) s_afQnBlk[j] = (REAL)d->auiFSampData_Filtered[c][i + j];
-		for (j = 1; j < BL; j++)
-		{
-			REAL key = s_afQnBlk[j];
-			k = j - 1;
-			while (k >= 0 && s_afQnBlk[k] > key) { s_afQnBlk[k + 1] = s_afQnBlk[k]; k--; }
-			s_afQnBlk[k + 1] = key;
-		}
-		bm = s_afQnBlk[BL / 2];
+		bm = ks_conf_qselect(s_afQnBlk, BL, BL / 2);/* 同左窗|2026.11.12 */
 		for (j = 0; j < BL; j++)
 			s_afQnResid[n++] = fabsf((REAL)d->auiFSampData_Filtered[c][i + j] - bm);
 	}
@@ -290,14 +252,7 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 			{
 				s_afQnBlk[j] = (REAL)d->auiFSampData_Filtered[c][lwS + j];
 			}
-			for (j = 1; j < lwLen; j++)/* 插入排序取中位(残块长≤BL≤缓冲维度) */
-			{
-				REAL key = s_afQnBlk[j];
-				k = j - 1;
-				while (k >= 0 && s_afQnBlk[k] > key) { s_afQnBlk[k + 1] = s_afQnBlk[k]; k--; }
-				s_afQnBlk[k + 1] = key;
-			}
-			bm = s_afQnBlk[lwLen / 2];
+			bm = ks_conf_qselect(s_afQnBlk, lwLen, lwLen / 2);/* 快速选择取上中位|2026.11.12 */
 			for (j = 0; j < lwLen; j++)
 				s_afQnResid[n++] = fabsf((REAL)d->auiFSampData_Filtered[c][lwS + j] - bm);
 		}
@@ -307,14 +262,7 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 			{
 				s_afQnBlk[j] = (REAL)d->auiFSampData_Filtered[c][rwS + j];
 			}
-			for (j = 1; j < rwLen; j++)
-			{
-				REAL key = s_afQnBlk[j];
-				k = j - 1;
-				while (k >= 0 && s_afQnBlk[k] > key) { s_afQnBlk[k + 1] = s_afQnBlk[k]; k--; }
-				s_afQnBlk[k + 1] = key;
-			}
-			bm = s_afQnBlk[rwLen / 2];
+			bm = ks_conf_qselect(s_afQnBlk, rwLen, rwLen / 2);/* 同左残块|2026.11.12 */
 			for (j = 0; j < rwLen; j++)
 				s_afQnResid[n++] = fabsf((REAL)d->auiFSampData_Filtered[c][rwS + j] - bm);
 		}
@@ -322,17 +270,15 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	if (n < KS_CONF_QN_MIN_PT_LOOSE) return;/* 保底模式下限16点(每侧残块≥8);
 	 * 常规整块n≥BL≥16自动满足,原60点门槛随"每侧保底一块"决策放宽|2026.11.12 */
 
-	/* MAD+离群剔除:升序排序后剔除即前缀(与opt双缓冲数值等价)
-	 * |wang.c+双置信度融合 2026.11.9.165510 */
-	ks_conf_sortf(s_afQnResid, n);
-	mad = s_afQnResid[n / 2];
+	/* MAD+离群剔除:全排序改两次快速选择+线性计数,取值与原排序口径逐位一致
+	 * (kept=≤thr的nKept个最小值,其第(nKept/2)小即保留组中位)|2026.11.12 */
+	mad = ks_conf_qselect(s_afQnResid, n, n / 2);
 	if (mad < KS_CONF_QN_QUANT) mad = KS_CONF_QN_QUANT;/*量化下限治本2026.11.12,见常量注释*/
 	thr = 3.5f * KS_CONF_MAD_C * mad;
 	nKept = 0;
 	for (i = 0; i < n; i++)
 	{
-		if (s_afQnResid[i] > thr) break;/* 已升序,其后全部超限 */
-		nKept++;
+		if (s_afQnResid[i] <= thr) nKept++;/* 线性计数(数组不再整体有序) */
 	}
 	/* 绝对40点线取消仅留60%比例线:n≥67时0.6n≥40.2,与原判定完全等价;
 	 * 小n(仅保底模式/粗采小门可达)按比例放宽|2026.11.12 */
@@ -340,7 +286,7 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	{
 		return;
 	}
-	sigma = KS_CONF_MAD_C * s_afQnResid[nKept / 2];
+	sigma = KS_CONF_MAD_C * ks_conf_qselect(s_afQnResid, n, nKept / 2);
 	if (sigma < KS_CONF_QN_QUANT) sigma = KS_CONF_QN_QUANT;/*量化下限治本2026.11.12*/
 
 	/* 斜率:前后沿25%→75%跨度 */
