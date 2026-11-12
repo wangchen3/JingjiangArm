@@ -18,7 +18,7 @@ HAS_MPL = False
 try:
     import matplotlib
     matplotlib.use("TkAgg")
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
     from matplotlib.figure import Figure
     import matplotlib.pyplot as plt
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei"]
@@ -138,20 +138,22 @@ def run_simulation(filepath, g0, gw, cur_ch, pol, warmup, si_val, girth_val, pit
     for ri, (s, e) in enumerate(revs):
         if ri == 0:
             continue
-        cur_pos = positive(chans[cur_ch][s:e].astype(float), pol)
-        fol_pos = positive(chans[fol_ch][s:e].astype(float), pol)
-        c_cur = find_anchor(cur_pos, g0, g0 + gw)
+        # ARM同口径: 只取波门切片(噪声窗为门内区间1/区间2, 坐标0基门内)
+        cur_pos = positive(chans[cur_ch][s:e].astype(float)[g0:g0+gw], pol)
+        fol_pos = positive(chans[fol_ch][s:e].astype(float)[g0:g0+gw], pol)
+        c_cur = find_anchor(cur_pos, 0, gw)
         if c_cur is None:
             rows.append(dict(rev=ri, status="门内无标"))
             continue
-        c_fol = find_anchor(fol_pos, max(0, c_cur - recenter), c_cur + recenter)
+        c_fol = find_anchor(fol_pos, max(0, c_cur - recenter),
+                            min(gw, c_cur + recenter))
         if c_fol is None:
             c_fol = c_cur
         try:
-            r_cur = m_cur.process(chans[cur_ch][s:e].astype(float), c_cur, pitch,
+            r_cur = m_cur.process(chans[cur_ch][s:e].astype(float)[g0:g0+gw], c_cur, pitch,
                                   polarity=pol, seg_half=seg_half,
                                   margin=margin, recenter=recenter)
-            r_fol = m_fol.process(chans[fol_ch][s:e].astype(float), c_fol, pitch,
+            r_fol = m_fol.process(chans[fol_ch][s:e].astype(float)[g0:g0+gw], c_fol, pitch,
                                   polarity=pol, seg_half=seg_half,
                                   margin=margin, recenter=recenter)
         except Exception:
@@ -322,24 +324,14 @@ class SimGUI:
         ttk.Label(self.lbl_summary, textvariable=self.var_summary,
                   font=("Microsoft YaHei", 10)).pack(anchor="w")
 
-        # ── 图表区: 双标签页 ──
+        # ── 图表区: 大图弹窗按钮(不再在主窗口内嵌小画布,太小看不清) ──
         if HAS_MPL:
-            frm3 = ttk.LabelFrame(self.root, text="图表", padding=4)
-            frm3.pack(fill="both", expand=True, padx=8, pady=4)
-            self.nb = ttk.Notebook(frm3)
-            self.nb.pack(fill="both", expand=True)
-            # Tab1: 波形预览
-            tab_wf = ttk.Frame(self.nb)
-            self.nb.add(tab_wf, text=" 波形预览 ")
-            self.fig_wf = Figure(figsize=(11, 4), dpi=96)
-            self.canvas_wf = FigureCanvasTkAgg(self.fig_wf, master=tab_wf)
-            self.canvas_wf.get_tk_widget().pack(fill="both", expand=True)
-            # Tab2: 误差与质量
-            tab_err = ttk.Frame(self.nb)
-            self.nb.add(tab_err, text=" 误差与质量 ")
-            self.fig = Figure(figsize=(11, 4), dpi=96)
-            self.canvas = FigureCanvasTkAgg(self.fig, master=tab_err)
-            self.canvas.get_tk_widget().pack(fill="both", expand=True)
+            frm3 = ttk.LabelFrame(self.root, text="图表(独立大窗口, 弹出后可缩放/平移)", padding=4)
+            frm3.pack(fill="x", padx=8, pady=4)
+            ttk.Button(frm3, text="🔍 大图·逐圈波形(可切圈/三档交点标注)",
+                       command=lambda: self._open_rev_viewer("逐圈波形")).pack(side="left", padx=6, pady=2)
+            ttk.Button(frm3, text="📈 大图·误差与质量曲线",
+                       command=self._open_curve_viewer).pack(side="left", padx=6, pady=2)
 
     def _pick_file(self):
         fn = filedialog.askopenfilename(
@@ -366,172 +358,278 @@ class SimGUI:
                     cur=self.var_cur.get(), pol=self.var_pol.get(),
                     edge=self.var_edge.get(), bipolar=self.var_bipolar.get())
 
-    def _preview(self):
-        """预览波形: 选文件后点击, 显示波门区域原始/双极性处理后的波形"""
-        p = self._get_params()
-        if p is None:
-            return
-        if not HAS_MPL:
-            messagebox.showinfo("提示", "需要matplotlib才能预览")
-            return
-        try:
-            t1, t2, revs, clen = load_ptwatch(self.var_file.get(), bipolar=p["bipolar"])
-            if not revs:
-                messagebox.showerror("错误", "没有有效圈")
-                return
-            s, e = revs[min(1, len(revs)-1)]  # 第2圈(弃首圈)
-            g0, gw = p["g0"], p["gw"]
-            pol = p["pol"]
-            # auto极性: 在门内判定(不看门外图案)
-            if pol == "auto":
-                t_cur = t1 if p["cur"] == "T1" else t2
-                gate_raw = t_cur[s:e].astype(float)[g0:g0+gw]
-                pol = polarity_of(gate_raw)
-            pos1 = positive(t1[s:e].astype(float), pol)
-            pos2 = positive(t2[s:e].astype(float), pol)
-            auto_pol = "峰" if np.median(pos1) < np.max(pos1)*0.5 else "谷→峰"
-            # 截取波门附近(前后各加500点余量)
-            lo = max(0, g0 - 200)
-            hi = min(len(pos1), g0 + gw + 200)
-            xs = np.arange(lo, hi)
-            self.fig_wf.clear()
-            ax1 = self.fig_wf.add_subplot(211)
-            ax2 = self.fig_wf.add_subplot(212, sharex=ax1)
-            for ax, y, ch, cc in ((ax1, pos1[lo:hi], "T1", "#1a4d8f"),
-                                   (ax2, pos2[lo:hi], "T2", "#e07b39")):
-                ax.plot(xs, y, lw=.7, color=cc)
-                ax.axvspan(g0, g0+gw, alpha=0.12, color="#2e8b57", label="波门")
-                ax.axhline(0, ls="-.", c="gray", lw=.6)
-                ax.set_ylabel(f"{ch}\n幅值(LSB)", fontsize=8)
-                ax.grid(alpha=.2)
-                if ch == "T1":
-                    ax.set_title(f"波形预览 (圈2)  门[{g0},{g0+gw})  "
-                                 f"极性={pol}  "
-                                 f"{'双极性[OK]' if p['bipolar'] else ''}  圈长{clen}", fontsize=10)
-            ax2.set_xlabel("圈坐标(点)", fontsize=9)
-            self.fig_wf.tight_layout()
-            self.canvas_wf.draw()
-            self.nb.select(0)  # 切到波形页
-        except Exception as ex:
-            messagebox.showerror("预览错误", f"{ex}")
+    # ═══════════ 绘图基础设施: 数据缓存 / 参数口径 / 大图弹窗 ═══════════
 
-    def _draw_waveform_annotated(self):
-        """仿真后: 只显示波门内容 + 阈值线 + 48点豆腐块噪声窗"""
-        if not HAS_MPL or not self.rows:
+    def _load_data(self, bipolar):
+        """CSV解析缓存(按 文件+双极性 组合键, 切圈时不重复解析)"""
+        key = (self.var_file.get(), bool(bipolar))
+        if getattr(self, "_dcache", None) and self._dcache.get("key") == key:
+            return self._dcache
+        t1, t2, revs, clen = load_ptwatch(self.var_file.get(), bipolar=bipolar)
+        self._dcache = dict(key=key, t1=t1, t2=t2, revs=revs, clen=clen)
+        return self._dcache
+
+    def _draw_params(self, p, dc):
+        """由界面参数求绘图/算法口径; si不可得(丝/点和版周都没填)返回None"""
+        si = p["si"]
+        if si <= 0 < p["girth"]:
+            si = p["girth"] / dc["clen"] * 100.0    # 与run_simulation一致: 用实测圈长
+        if si <= 0:
+            return None
+        si_mm = si / 100.0
+        return dict(si=si, si_mm=si_mm,
+                    pitch=max(1, int(round(20.0 / si_mm))),
+                    BL=max(16, int(round(2.77 / si_mm))),
+                    margin=max(10, int(round(0.8 / si_mm))),
+                    seg_half=max(240, int(round(5.0 / si_mm))),
+                    recenter=max(30, int(round(3.5 / si_mm))))
+
+    def _preview(self):
+        """预览波形 = 打开逐圈大图弹窗(圈1起, 可切圈)"""
+        self._open_rev_viewer("波形预览")
+
+    def _open_rev_viewer(self, title, start_rev=1):
+        """独立大窗口: 逐圈波形(概览+标记放大+三档交点标注), 可切圈/缩放/平移"""
+        if not HAS_MPL:
+            messagebox.showinfo("提示", "需要matplotlib才能画图")
             return
         p = self._get_params()
         if p is None:
             return
         try:
-            t1, t2, revs, clen = load_ptwatch(self.var_file.get(), bipolar=p["bipolar"])
-            s, e = revs[min(1, len(revs)-1)]
-            g0, gw = p["g0"], p["gw"]
-            gate_lo, gate_hi = g0, g0 + gw
-            pol = self.info.get("pol", p["pol"])
-            cur_ch = self.info.get("cur", "T1")
-            fol_ch = self.info.get("fol", "T2")
-            # 只取波门数据
-            cur_raw = (t1 if cur_ch == "T1" else t2)[s:e].astype(float)[gate_lo:gate_hi]
-            fol_raw = (t1 if fol_ch == "T1" else t2)[s:e].astype(float)[gate_lo:gate_hi]
-            cur_pos = positive(cur_raw, pol)
-            fol_pos = positive(fol_raw, pol)
-            xs = np.arange(gate_lo, gate_hi)  # 用波门坐标
-            mid_row = self.rows[len(self.rows)//2]
-            si = self.info.get("si", 1.0)
-            si_mm = si / 100.0
-            BL = mqm.PAR["blk_len"]
-            margin = max(10, int(round(0.8 / si_mm)))
-            pitch = self.info.get("pitch", 1000)
-            self.fig_wf.clear()
-            ax1 = self.fig_wf.add_subplot(211)
-            ax2 = self.fig_wf.add_subplot(212, sharex=ax1)
-            for ax, y, ch, cc, raw in ((ax1, cur_pos, cur_ch, "#1a4d8f", cur_raw),
-                                        (ax2, fol_pos, fol_ch, "#e07b39", fol_raw)):
-                ax.plot(xs, y, lw=.8, color=cc)
-                ax.axhline(0, ls="-.", c="gray", lw=.6)
-                ax.grid(alpha=.2)
-                ax.set_ylabel(f"{ch}\nLSB", fontsize=8)
-                role = "当前色" if ch == cur_ch else "跟踪色"
-                ax.text(0.98, 0.95, f"{ch}={role}", transform=ax.transAxes,
-                        ha="right", va="top", fontsize=9, color=cc, weight="bold")
-            # ── 在当前色上标注 ──
-            ax_cur = ax1 if cur_ch == "T1" else ax2
-            # 找标(门内)
-            w = cur_pos
-            if len(w) > 0 and w.max() > 0:
-                hi_pts = np.flatnonzero(w > 0.9 * w.max())
-                anchor = int(np.mean(hi_pts)) if len(hi_pts) >= 3 else int(np.argmax(w))
-            else:
-                anchor = None
-            if anchor is not None:
-                seg = smooth3e(cur_pos[max(0,anchor-100):anchor+101])
-                scope = rpeak(seg)
-                # 三档阈值线(画在门坐标上)
-                for r, lcc in ((0.75, "#2e8b57"), (0.5, "#c0392b"), (0.25, "#e07b39")):
-                    lvl = scope * r
-                    ax_cur.axhline(lvl, ls=":", c=lcc, lw=1, alpha=.8)
-                    ax_cur.text(gate_hi - 5, lvl, f"{int(r*100)}%={lvl:.0f}",
-                                fontsize=7, color=lcc, va="center", ha="right")
-                # 噪声窗计算(门内坐标, 裁剪到门边界)
-                cr = fw_crossings(seg, scope)
-                hb = pitch // 4  # 默认
-                if None not in cr[0.25]:
-                    f25 = max(0, anchor-100) + cr[0.25][0]
-                    b25 = max(0, anchor-100) + cr[0.25][1]
-                    hb = int(b25 - f25) + margin
-                # 左窗: [max(门首, anchor-pitch+hb), anchor-hb)
-                lw_s = max(gate_lo, gate_lo + anchor - pitch + hb)
-                lw_e = gate_lo + anchor - hb
-                # 右窗: [anchor+hb, min(门尾, anchor+pitch-hb))
-                rw_s = gate_lo + anchor + hb
-                rw_e = min(gate_hi, gate_lo + anchor + pitch - hb)
-                # 画48点豆腐块
-                block_colors = ["#d4e6f1", "#fadbd8"]  # 交替
-                y_min, y_max = ax_cur.get_ylim()
-                for wi, (ws, we) in enumerate(((lw_s, lw_e), (rw_s, rw_e))):
-                    if we <= ws:
-                        continue
-                    nb = (we - ws) // BL  # 完整块数
-                    for j in range(nb):
-                        bx_s = ws + j * BL
-                        bx_e = bx_s + BL
-                        # 转回门坐标
-                        bx_s_abs = gate_lo + bx_s - gate_lo  # ws已经是门坐标
-                        ax_cur.axvspan(bx_s, bx_e, alpha=0.3,
-                                       color=block_colors[j % 2], lw=0.5,
-                                       ec="#7d3c98", ls="--")
-                    # 块中位线
-                    for j in range(nb):
-                        blk = cur_pos[ws-gate_lo+j*BL : ws-gate_lo+(j+1)*BL]
-                        if len(blk) == BL:
-                            bm = np.sort(blk)[BL//2]
-                            bx_s = ws + j * BL
-                            ax_cur.plot([bx_s, bx_s+BL], [bm, bm],
-                                       c="#c0392b", lw=2, alpha=.8)
-                    we_txt = "左窗" if wi == 0 else "右窗"
-                    info_txt = f"{we_txt} {nb}块×{BL}点"
-                    if we - ws < BL:
-                        info_txt += f" (余{we-ws}点不够一块)"
-                    if we <= ws + BL:
-                        info_txt += " ⚠太小"
-                    ax_cur.text((ws+we)/2, y_min + (y_max-y_min)*0.05,
-                               info_txt, fontsize=7, color="#7d3c98",
-                               ha="center", va="bottom",
-                               bbox=dict(fc="white", ec="#7d3c98", alpha=.8, pad=1))
-                # 标位置
-                ax_cur.axvline(gate_lo + anchor, ls="--", c="#c0392b", lw=1.2, alpha=.7)
-                ax_cur.text(gate_lo + anchor, scope * 1.02,
-                           f"标@{gate_lo+anchor}", fontsize=8,
-                           color="#c0392b", ha="center")
-            ax1.set_title(f"波门[{gate_lo},{gate_hi})  极性={pol}  "
-                          f"BL={BL}点/块  pitch={pitch}点  "
-                          f"Q简化={mid_row.get('Q_simple','?')}", fontsize=10)
-            ax2.set_xlabel("波门坐标(点)", fontsize=9)
-            ax2.set_xlim(gate_lo, gate_hi)
-            self.fig_wf.tight_layout()
-            self.canvas_wf.draw()
+            dc = self._load_data(p["bipolar"])
         except Exception as ex:
-            pass
+            messagebox.showerror("错误", f"读文件失败:\n{ex}")
+            return
+        if not dc["revs"]:
+            messagebox.showerror("错误", "没有有效圈")
+            return
+        nmax = len(dc["revs"]) - 1
+        if nmax < 1:
+            messagebox.showerror("错误", "只有1圈数据")
+            return
+        top = tk.Toplevel(self.root)
+        top.title(f"{title} — {os.path.basename(self.var_file.get())}")
+        top.geometry("1500x950")
+        state = {"rev": max(1, min(int(start_rev), nmax))}
+
+        ctrl = ttk.Frame(top, padding=6)
+        ctrl.pack(fill="x")
+        info = ttk.Label(ctrl, text="", font=("Microsoft YaHei", 10, "bold"))
+        info.pack(side="left", padx=10)
+
+        def goto(r):
+            state["rev"] = max(1, min(nmax, int(r)))
+            redraw()
+
+        ttk.Button(ctrl, text="◀ 上一圈", command=lambda: goto(state["rev"] - 1)).pack(side="left")
+        ttk.Button(ctrl, text="下一圈 ▶", command=lambda: goto(state["rev"] + 1)).pack(side="left", padx=4)
+        sb = ttk.Spinbox(ctrl, from_=1, to=nmax, width=5,
+                         command=lambda: goto(sb.get()))
+        sb.pack(side="left")
+        sb.bind("<Return>", lambda ev: goto(sb.get()))
+
+        figframe = ttk.Frame(top)
+        figframe.pack(fill="both", expand=True)
+        fig = Figure(figsize=(14.5, 8.8), dpi=100)
+        canvas = FigureCanvasTkAgg(fig, master=figframe)
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        NavigationToolbar2Tk(canvas, figframe).update()
+
+        top.bind("<Left>", lambda ev: goto(state["rev"] - 1))
+        top.bind("<Right>", lambda ev: goto(state["rev"] + 1))
+
+        def redraw():
+            sb.set(state["rev"])
+            fig.clear()
+            self._draw_rev(fig, state["rev"], dc, p)
+            fig.tight_layout()
+            canvas.draw()
+            row = next((r for r in self.rows if r.get("rev") == state["rev"]), None)
+            extra = ""
+            if row:
+                extra = (f"   |   级={row.get('qLevel')}  σ={row.get('sigma')}  "
+                         f"jp={row.get('jp')}丝  Qn={row.get('Qn')}  "
+                         f"W50={row.get('w50')}丝  {row.get('status','')}")
+            info.config(text=f"圈 {state['rev']}/{nmax}   (←/→键或按钮切圈){extra}")
+
+        redraw()
+
+    def _draw_rev(self, fig, ri, dc, p):
+        """单圈绘图(门内坐标0..gw, 与ARM detail数组同口径):
+        概览=双通道+标记排除区+ARM区间1/区间2噪声窗豆腐块(双端同步铺块+块中位线)
+        放大=T1/T2标记(三档线+交点标注+稳健峰位置)"""
+        t1, t2, revs = dc["t1"], dc["t2"], dc["revs"]
+        s, e = revs[ri]
+        g0, gw = p["g0"], p["gw"]
+        pol = p["pol"]
+        cur_ch, fol_ch = p["cur"], ("T2" if p["cur"] == "T1" else "T1")
+        cur_arr = (t1 if cur_ch == "T1" else t2)[s:e].astype(float)
+        fol_arr = (t1 if fol_ch == "T1" else t2)[s:e].astype(float)
+        if pol == "auto":
+            pol = polarity_of(cur_arr[g0:g0 + gw])
+        cur_pos = positive(cur_arr[g0:g0 + gw], pol)   # 只取门内
+        fol_pos = positive(fol_arr[g0:g0 + gw], pol)
+        dp = self._draw_params(p, dc)
+        half = dp["seg_half"] if dp else 150
+
+        ax1 = fig.add_subplot(311)
+        ax2 = fig.add_subplot(312)
+        ax3 = fig.add_subplot(313)
+        xs = np.arange(0, len(cur_pos))
+        for y, ch, cc in ((cur_pos, cur_ch, "#1a4d8f"), (fol_pos, fol_ch, "#e07b39")):
+            ax1.plot(xs, y, lw=.8, color=cc, alpha=.9,
+                     label="%s%s" % (ch, "(当前色)" if ch == cur_ch else "(跟踪色)"))
+        ax1.axhline(0, ls="-.", c="gray", lw=.5)
+        ax1.grid(alpha=.2); ax1.legend(fontsize=8, loc="upper right")
+        ax1.set_ylabel("正向化幅值(LSB)", fontsize=9)
+        ax1.set_xlim(0, len(cur_pos))
+        si_txt = ("si=%.4f丝/点  BL=%d点/块" % (dp["si"], dp["BL"])
+                  ) if dp else "si未知(填丝/点或版周后显示标注)"
+        ax1.set_title("圈%d  极性=%s  波门[%d,%d) 门内坐标  圈长%d  %s"
+                      % (ri, pol, g0, g0 + gw, dc["clen"], si_txt), fontsize=11)
+
+        c_cur = find_anchor(cur_pos, 0, len(cur_pos))
+        if c_cur is None:
+            for ax in (ax2, ax3):
+                ax.text(.5, .5, "门内找不到标记(锚=最高点群)", ha="center", va="center",
+                        transform=ax.transAxes, fontsize=12, color="#c0392b")
+            return
+
+        def extract(arr, c, h):
+            a, b = max(0, c - h), min(len(arr) - 1, c + h)
+            return smooth3e(arr[a:b + 1]), a
+
+        # T1放大(自适应两轮, 宽标扩窗)
+        seg, a0 = extract(cur_pos, c_cur, half)
+        scope = rpeak(seg)
+        cr = fw_crossings(seg, scope)
+        if None not in cr[0.25]:
+            w25 = cr[0.25][1] - cr[0.25][0]
+            if w25 > 1.2 * half:
+                seg, a0 = extract(cur_pos, c_cur, int(w25 * 0.75) + 20)
+                scope = rpeak(seg)
+                cr = fw_crossings(seg, scope)
+
+        ax1.axvline(c_cur, ls="--", c="#c0392b", lw=1)
+
+        # ── ARM噪声窗: 排除区 + 区间1/区间2 豆腐块(双端同步) ──
+        if dp is not None and cr is not None and None not in cr[0.25]:
+            f25g = a0 + cr[0.25][0]
+            b25g = a0 + cr[0.25][1]
+            hb = int(b25g - f25g)                        # 排除区半宽=W25(K已取消|2026.11.12)
+            ex1, ex2 = int(f25g) - hb, int(b25g) + hb     # 排除区边界
+            n1 = len(cur_pos)
+            if 0 <= ex1 < ex2 <= n1:
+                ax1.axvspan(ex1, ex2, alpha=.15, color="#95a5a6")
+                ax1.text((ex1 + ex2) / 2, .99, "标记排除区 W25=%d点" % hb,
+                         transform=ax1.get_xaxis_transform(), fontsize=7.5,
+                         color="#566573", ha="center", va="top")
+            BL = dp["BL"]
+            blockc = ("#d4e6f1", "#fadbd8")
+            tot_pts = 0
+            for (wa, we, dr, nm) in ((0, ex1, -1, "区间1"), (ex2, n1, +1, "区间2")):
+                wl = we - wa
+                if wl < 8:                                # 连残块都放不下(空白<8点)
+                    ax1.text(.25 if dr < 0 else .75, .5,
+                             "%s空白不足8点→该侧无块" % nm,
+                             transform=ax1.get_xaxis_transform(), fontsize=9,
+                             color="#c0392b", ha="center")
+                    continue
+                nfull = wl // BL
+                if nfull > 0:                             # 整块: 自排除边向外(双端同步)
+                    blocks = ([(we - (j + 1) * BL, we - j * BL) for j in range(nfull)]
+                              if dr < 0 else
+                              [(wa + j * BL, wa + (j + 1) * BL) for j in range(nfull)])
+                    label = "%s: %d块×%d" % (nm, nfull, BL)
+                else:                                     # 每侧保底一块(残块=整窗)
+                    blocks = [(wa, we)]
+                    label = "%s: 1残块×%d点(保底)" % (nm, wl)
+                for bi, (s0, s1) in enumerate(blocks):    # 豆腐块
+                    ax1.axvspan(s0, s1, alpha=.35, color=blockc[bi % 2],
+                                lw=.6, ec="#7d3c98", ls="--")
+                for (s0, s1) in blocks:                   # 块中位线
+                    blk = cur_pos[s0:s1]
+                    bm = np.sort(blk)[len(blk) // 2]
+                    ax1.plot([s0, s1], [bm, bm], c="#c0392b", lw=1.6, alpha=.85)
+                tot_pts += sum(s1 - s0 for (s0, s1) in blocks)
+                cen = (blocks[0][0] + blocks[-1][1]) / 2
+                ax1.text(cen, .93, label,
+                         transform=ax1.get_xaxis_transform(), fontsize=7.5,
+                         color="#7d3c98", ha="center", va="top")
+            if 0 < tot_pts < mqm.PAR["noise_min_pts"]:
+                ax1.text(n1 / 2, .04, "两侧块点合计%d<%d→σ无效"
+                         % (tot_pts, mqm.PAR["noise_min_pts"]),
+                         transform=ax1.get_xaxis_transform(), fontsize=9,
+                         color="#c0392b", ha="center")
+
+        self._draw_mark_zoom(ax2, cur_pos, half, seg, scope, cr, dp, a0,
+                             "%s(当前色)  标@%d 门内坐标" % (cur_ch, c_cur))
+
+        # ── T2放大: 管线同款先在当前色附近找 ──
+        c_fol = None
+        if dp is not None:
+            c_fol = find_anchor(fol_pos, max(0, c_cur - dp["recenter"]),
+                                min(len(fol_pos), c_cur + dp["recenter"]))
+        borrowed = c_fol is None
+        c_fol = c_cur if borrowed else c_fol
+        seg2, a2 = extract(fol_pos, c_fol, half)
+        scope2 = rpeak(seg2)
+        cr2 = fw_crossings(seg2, scope2)
+        ax1.axvline(c_fol, ls="--", c="#e07b39", lw=1, alpha=.8)
+        self._draw_mark_zoom(ax3, fol_pos, half, seg2, scope2, cr2, dp, a2,
+                             "%s(跟踪色)  标@%d 门内坐标%s"
+                             % (fol_ch, c_fol, "(未找到,借当前色位)" if borrowed else ""))
+        ax3.set_xlabel("门内坐标(点)", fontsize=9)
+
+    def _draw_mark_zoom(self, ax, pos, half, seg, scope, cr, dp, a0, title):
+        """标记放大窗: 原始+平滑、三档阈值线、前后沿交点竖线标注、W50标注、稳健峰位置"""
+        xs = np.arange(a0, a0 + len(seg))
+        ax.plot(xs, pos[a0:a0 + len(seg)], lw=.5, color="gray", alpha=.5, label="原始")
+        ax.plot(xs, seg, lw=1.1, color="#1a4d8f", label="3点平滑")
+        ax.axhline(0, ls="-.", c="gray", lw=.5)
+        ax.grid(alpha=.2)
+        # 稳健峰位置(rpeak为top5中位值, 位置取平滑段argmax)
+        pk = a0 + int(np.argmax(seg))
+        ax.axvline(pk, ls="-.", c="#27ae60", lw=1.2)
+        ax.annotate("稳健峰@%d\n(top5中位=%.0f)" % (pk, scope),
+                    xy=(pk, scope), fontsize=8, color="#27ae60", ha="center",
+                    xytext=(0, 10), textcoords="offset points")
+        cols = {0.25: "#e07b39", 0.5: "#c0392b", 0.75: "#2e8b57"}
+        for r in (0.25, 0.5, 0.75):
+            lvl = scope * r
+            ax.axhline(lvl, ls=":", c=cols[r], lw=1, alpha=.85)
+            ax.text(xs[-1], lvl, " %d%%=%.0f" % (r * 100, lvl), fontsize=8,
+                    color=cols[r], va="center", ha="left")
+        if cr is not None:
+            for r in (0.25, 0.5, 0.75):
+                f_, b_ = cr[r]
+                for x_, tag in ((f_, "f"), (b_, "b")):
+                    if x_ is None:
+                        continue
+                    xi = a0 + x_
+                    ax.axvline(xi, ls="--", c=cols[r], lw=1, alpha=.8)
+                    silk = ("=%.1f丝" % (x_ * dp["si"])) if dp else ""
+                    ax.annotate("%s%d@%d%s" % (tag, r * 100, xi, silk),
+                                xy=(xi, scope * r), fontsize=7.5, color=cols[r],
+                                xytext=(0, 14 if tag == "f" else -18),
+                                textcoords="offset points", ha="center")
+            f50, b50 = cr[0.5]
+            if None not in (f50, b50) and dp:
+                w50 = (b50 - f50) * dp["si"]
+                ax.annotate("", xy=(a0 + b50, scope * .5), xytext=(a0 + f50, scope * .5),
+                            arrowprops=dict(arrowstyle="<->", color="#c0392b", lw=1.2))
+                ax.text((2 * a0 + f50 + b50) / 2, scope * .55,
+                        "W50=%.1f丝(%.2fmm)" % (w50, w50 / 100.0),
+                        fontsize=9, color="#c0392b", ha="center")
+        ax.set_title(title, fontsize=10)
+        ax.set_ylabel("幅值(LSB)", fontsize=9)
+        miss = [("%d%%" % (r * 100)) for r in (0.25, 0.5, 0.75)
+                if cr is None or None in cr[r]]
+        if miss:
+            ax.text(.99, .05, "交点未找到: %s(窗口外?)" % ",".join(miss),
+                    transform=ax.transAxes, fontsize=9, color="#c0392b",
+                    ha="right", va="bottom")
 
     def _run(self):
         if not self.var_file.get() or self.var_file.get() == "未选择":
@@ -563,8 +661,7 @@ class SimGUI:
         self._fill_table()
         self._fill_summary()
         if HAS_MPL:
-            self._draw_waveform_annotated()
-            self._draw_fig()
+            self._open_rev_viewer("仿真结果·逐圈波形", 1)
 
     def _fill_table(self):
         self.tree.delete(*self.tree.get_children())
@@ -610,27 +707,43 @@ class SimGUI:
             lines.append(f"... 建表未完成 (暖机{info.get('warmup_count',0)}圈, 质量不够或圈数不足)")
         self.var_summary.set("\n".join(lines))
 
-    def _draw_fig(self):
-        self.fig.clear()
+    def _open_curve_viewer(self):
+        """独立大窗口: eV/eH/质量逐圈曲线(运行仿真后可看)"""
+        if not HAS_MPL:
+            messagebox.showinfo("提示", "需要matplotlib才能画图")
+            return
+        if not self.rows:
+            messagebox.showwarning("提示", "请先运行仿真")
+            return
+        top = tk.Toplevel(self.root)
+        top.title("误差与质量曲线 — %s" % os.path.basename(self.var_file.get()))
+        top.geometry("1400x800")
+        figframe = ttk.Frame(top)
+        figframe.pack(fill="both", expand=True)
+        fig = Figure(figsize=(13.5, 7.4), dpi=100)
+        canvas = FigureCanvasTkAgg(fig, master=figframe)
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        NavigationToolbar2Tk(canvas, figframe).update()
+
         x = [r.get("rev", i) for i, r in enumerate(self.rows)]
         f = lambda k: [r.get(k) if r.get(k) is not None else np.nan for r in self.rows]
-        ax1 = self.fig.add_subplot(311)
-        ax1.plot(x, f("eV"), "-o", ms=3, lw=.8, color="#1a4d8f", label="eV")
+        ax1 = fig.add_subplot(311)
+        ax1.plot(x, f("eV"), "-o", ms=4, lw=.9, color="#1a4d8f", label="eV纵向误差")
         ax1.axhline(0, ls=":", c="gray", lw=.5)
-        ax1.set_ylabel("eV(丝)"); ax1.legend(fontsize=7); ax1.grid(alpha=.25)
-        ax2 = self.fig.add_subplot(312)
-        ax2.plot(x, f("eH"), "-o", ms=3, lw=.8, color="#e07b39", label="eH")
+        ax1.set_ylabel("eV(丝)"); ax1.legend(fontsize=9); ax1.grid(alpha=.25)
+        ax2 = fig.add_subplot(312)
+        ax2.plot(x, f("eH"), "-o", ms=4, lw=.9, color="#e07b39", label="eH横向误差")
         ax2.axhline(0, ls=":", c="gray", lw=.5)
-        ax2.set_ylabel("eH(丝)"); ax2.legend(fontsize=7); ax2.grid(alpha=.25)
-        ax3 = self.fig.add_subplot(313)
-        ax3.plot(x, f("Q_simple"), "-o", ms=3, lw=1, color="#c0392b", label="Q简化(Qn×Qd)")
-        ax3.plot(x, f("Q_pair"), "-s", ms=2, lw=.7, color="#7d3c98", label="配对Q", alpha=.7)
-        ax3.axhline(90, ls="--", c="#2e8b57", lw=.7)
-        ax3.axhline(25, ls="--", c="#c0392b", lw=.7)
+        ax2.set_ylabel("eH(丝)"); ax2.legend(fontsize=9); ax2.grid(alpha=.25)
+        ax3 = fig.add_subplot(313)
+        ax3.plot(x, f("Q_simple"), "-o", ms=4, lw=1, color="#c0392b", label="Q简化(Qn×Qd)")
+        ax3.plot(x, f("Q_pair"), "-s", ms=3, lw=.8, color="#7d3c98", label="配对Q", alpha=.7)
+        ax3.axhline(90, ls="--", c="#2e8b57", lw=.8, label="90分良线")
+        ax3.axhline(25, ls="--", c="#c0392b", lw=.8, label="25分差线")
         ax3.set_ylabel("Q(分)"); ax3.set_xlabel("圈号")
-        ax3.legend(fontsize=7); ax3.grid(alpha=.25); ax3.set_ylim(0, 105)
-        self.fig.tight_layout()
-        self.canvas.draw()
+        ax3.legend(fontsize=8, ncol=4); ax3.grid(alpha=.25); ax3.set_ylim(0, 105)
+        fig.tight_layout()
+        canvas.draw()
 
     def _export(self):
         if not self.rows:

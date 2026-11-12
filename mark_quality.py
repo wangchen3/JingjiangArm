@@ -15,7 +15,8 @@ PAR = dict(
     lin_rej_si=8.0,                  # 沿线性度门限(丝)
     r2_warn=0.99, r2_bad=0.95,       # R²双档
     reg_band=(0.30, 0.70),           # 回归带
-    noise_min_pts=60,                # 噪声窗最少点数
+    noise_min_pts=16,                # 噪声窗最少点数(保底模式:每侧残块≥8)|原60,2026.11.12随
+                                     # "每侧保底一块"决策放宽;常规整块n≥BL不受影响
     blk_len=48,                      # 噪声分块长度(点)@2.77mm物理带宽, 粗采按§16换算
     rpeak_k=5,                       # 稳健峰top-k
     reg_en=True,                     # 沿回归指标使能(粗采样下置False)
@@ -62,34 +63,50 @@ class MarkQuality:
         self.clean_cnt = 0
         self.l2_streak = 0
 
-    # ---- 内部: 噪声窗(门级空隙 + 分块去趋势σ, 与C逐位一致) ----
-    def _noise_sigma(self, gate, center, pitch, cr, margin=25):
+    # ---- 内部: 噪声σ —— ARM同款窗口几何(ks_conf_err.c ks_conf_calc_qn):
+    #   区间1 = [0, f25-W25), 区间2 = [b25+W25, len(gate))
+    #   (f25/b25为25%前后沿门内坐标, W25=b25-f25, 原K=margin已取消|2026.11.12; 两区间即门内标记
+    #    排除区以外的全部空白——ARM的lwS=0/lwE=f25-hb/rwS=b25+hb/rwE=dn)
+    #   双端块相位同步: 两区间的块都从标记排除区边缘向外铺(关于标记镜像;
+    #    ARM原版左区间从门首铺, 此处按用户要求2026.11.12改为双端同步,
+    #    逐块独立减块中位, 块相位对σ数值无影响)
+    #   分块去趋势+MAD: 逐块减块中位(上中位), 残差单遍MAD, 3.5×1.4826×MAD剔离群
+    def _noise_sigma(self, gate, center, pitch, cr, margin=25, seg_off=0):
         f25, b25 = cr[0.25]
-        if f25 is not None and b25 is not None:
-            half_base = (b25 - f25) * 1.0 + margin
-        else:
-            half_base = pitch * 0.25
-        # 注意: 先浮点加减后截断(勿先截断half_base, 与C一致)
-        g0 = max(0, int(center - pitch + half_base))
-        g1 = int(max(g0 + 1, center - half_base))
-        g2 = int(min(len(gate) - 1, center + half_base))
-        g3 = min(len(gate), int(center + pitch - half_base))
-        seg = np.concatenate([gate[g0:g1], gate[g2:g3]])
-        if len(seg) < PAR["noise_min_pts"]:
-            return None, len(seg)
+        if f25 is None or b25 is None:
+            return None, 0
+        f25g = seg_off + f25                # 段内坐标(±seg_half)→门内坐标
+        b25g = seg_off + b25
+        half_base = (b25 - f25)            # 排除区半宽=W25(K=0.8mm安全边已取消|2026.11.12)
         BL = PAR["blk_len"]
+        w1e = int(f25g - half_base)        # 区间1终点(不含)
+        w2s = int(b25g + half_base)        # 区间2起点
+        def add_block(s0, s1):
+            blk = gate[s0:s1]
+            bm = np.sort(blk)[len(blk)//2]        # 上中位(与C一致)
+            resid.extend(np.abs(blk - bm))
         resid = []
-        for sub in (gate[g0:g1], gate[g2:g3]):      # 按段分块不拼接(与C一致)
-            for i in range(len(sub) // BL):
-                blk = sub[i*BL:(i+1)*BL]
-                bm = np.sort(blk)[len(blk)//2]        # 上中位(与C一致)
-                resid.extend(np.abs(blk - bm))
-        resid = np.array(resid)
+        for (wa, we, dr) in ((0, w1e, -1), (w2s, len(gate), +1)):
+            wl = we - wa
+            if wl <= 0:
+                continue
+            nfull = wl // BL
+            if nfull > 0:                    # 整块: 自排除边向外铺(双端同步)
+                for j in range(nfull):
+                    if dr < 0:
+                        add_block(we - (j+1)*BL, we - j*BL)
+                    else:
+                        add_block(wa + j*BL, wa + (j+1)*BL)
+            elif wl >= 8:
+                add_block(wa, we)            # 每侧保底一块: 残块=整窗|2026.11.12
+        resid = np.array(resid) if resid else np.array([])
+        if len(resid) < PAR["noise_min_pts"]:    # 保底下限16点(每侧残块≥8)|2026.11.12
+            return None, len(resid)
         mad = np.sort(resid)[len(resid)//2]           # 单遍MAD
         if mad < PAR["quant_lsb"]:                    # 量化下限治本2026.11.12
             mad = PAR["quant_lsb"]
         keep = resid <= 3.5 * 1.4826 * mad
-        if keep.sum() < 40 or keep.sum() < 0.6*len(resid):
+        if keep.sum() < 0.6*len(resid):   # 绝对40点线并入比例线(小n放宽)|2026.11.12
             return None, -len(resid)
         sigma = 1.4826 * np.sort(resid[keep])[int(keep.sum())//2]
         return max(sigma, PAR["quant_lsb"]), int(keep.sum())
@@ -149,8 +166,9 @@ class MarkQuality:
         for r in (0.5, 0.25, 0.75):
             if widths[r] is not None:
                 fw_w, fw_lvl = widths[r], r; break
-        # 噪声/SNR
-        sigma, _npts = self._noise_sigma(gate_pos, c, pitch, cr, margin=margin)
+        # 噪声/SNR(窗口几何=ARM区间1/区间2, seg_off把段内交点换回门内坐标)
+        sigma, _npts = self._noise_sigma(gate_pos, c, pitch, cr, margin=margin,
+                                         seg_off=c - seg_half)
         noise_inv = sigma is None
         if noise_inv:
             sigma = self.sigma_last if self.sigma_last else 1.0

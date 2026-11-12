@@ -36,8 +36,9 @@
 #define KS_CONF_TAU_SILK		5.0f	/* Qn容差τ@丝|固定值,需要可调时再开变量(仿真平台optTauSilk默认5) */
 #define KS_CONF_MAD_C			1.4826f	/* MAD→正态标准差系数 */
 #define KS_CONF_SQRT2			1.41421356f
-#define KS_CONF_QN_MIN_PT		60	/* 噪声窗最少点数 */
-#define KS_CONF_QN_KEEP_MIN		40	/* 离群剔除后最少保留点数 */
+#define KS_CONF_QN_MIN_PT_LOOSE	16	/* 噪声窗最少点数(保底模式:每侧残块≥8)|2026.11.12
+									 * 原60点门槛随"每侧保底一块"决策放宽;常规整块n≥BL≥16不受影响 */
+/* KS_CONF_QN_KEEP_MIN(40绝对保留线)已并入60%比例线:n≥67时二者等价,小n放宽|2026.11.12 */
 #define KS_CONF_QN_KEEP_RATIO	0.6f	/* 离群剔除后最少保留比例 */
 #define KS_CONF_QN_MAXPT		3000	/* 噪声残差缓冲上限@同detail滤波数组维度 */
 #define KS_CONF_QN_BLK_MAX		256	/* 分块尺寸上限@块排序缓冲维度 */
@@ -174,7 +175,8 @@ static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
 }
 
 /* ---------------- Qn:宽度测量随机精度分数(移植KSOptCalcQn数学部分) ----------------
- * 噪声窗=门内标记两侧空白区(25%前沿f25/25%后沿b25对称各外扩half_base=25%标宽+0.8mm)
+ * 噪声窗=门内标记两侧空白区(25%前沿f25/25%后沿b25对称各外扩half_base=25%标宽;
+ * 原+0.8mm脚部安全边K已取消,冗余|2026.11.12用户决策)
  * |Yang.zj+噪声窗对称 2026.11.10.110543(原右窗锚75%后沿b75,不对称);
  * 分块(2.77mm/精度)取中位数去局部基线,残差做MAD,剔除3.5×1.4826×MAD离群后
  * σ=1.4826×中位数;斜率m=0.5×幅值/(25%→75%沿跨度)取前后沿较小;
@@ -191,7 +193,7 @@ static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
 static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 							REAL rPrecMm, INT iDn)
 {
-	INT i, j, k, n, nKept, dn, markW, margin, halfBase, BL;
+	INT i, j, k, n, nKept, dn, markW, halfBase, BL;
 	INT lwS, lwE, rwS, rwE;
 	REAL sigma, mf, mb, mMin, si, jp, arg, mad, thr;
 	REAL f25, b25, f75, b75, scope, df, db, bm;
@@ -224,23 +226,25 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 
 	markW = (INT)(b25 - f25);/* 25%处标宽(点) */
 	if (markW <= 0) return;
-	margin = (INT)(0.8f / rPrecMm + 0.5f);/* 0.8mm换算为点 */
-	if (margin < 10) margin = 10;
-	halfBase = markW + margin;
+	/* K(0.8mm脚部安全边)取消|2026.11.12用户决策: W25外扩本身已覆盖标记脚部,
+	 * 叠加K属冗余,窄门工况每侧白白损失0.8mm空白;排除区半宽=25%标宽 */
+	halfBase = markW;
 	BL = (INT)(2.77f / rPrecMm + 0.5f);/* 2.77mm物理带宽换算为块长 */
 	if (BL < 16) BL = 16;
 	if (BL > KS_CONF_QN_BLK_MAX) BL = KS_CONF_QN_BLK_MAX;
 
-	/* 左窗:[0, f25-halfBase),右窗:[b25+halfBase, dn)截到门内,放不下一个块则空
+	/* 左窗:[0, f25-halfBase),右窗:[b25+halfBase, dn)截到门内
 	 * 两侧对称:均以25%沿为锚向外扩half_base(原右窗锚75%后沿b75,不对称)
-	 * |Yang.zj+噪声窗对称 2026.11.10.110543 */
+	 * |Yang.zj+噪声窗对称 2026.11.10.110543;
+	 * 边界只做越界钳位,不再"放不下整块则整窗置空"——放不下整块的侧由
+	 * 下方"每侧保底一块"补残块|2026.11.12用户决策 */
 	lwS = 0;
 	lwE = (INT)f25 - halfBase;
-	if (lwE < lwS + BL) lwE = lwS;
+	if (lwE < lwS) lwE = lwS;
 	rwS = (INT)b25 + halfBase;
 	if (rwS < 0) rwS = 0;
 	rwE = dn;
-	if (rwS > rwE - BL) rwS = rwE;
+	if (rwS > rwE) rwS = rwE;
 
 	/* 分块去趋势:每块取中位数,偏差从块中位数算 */
 	n = 0;
@@ -272,7 +276,49 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 		for (j = 0; j < BL; j++)
 			s_afQnResid[n++] = fabsf((REAL)d->auiFSampData_Filtered[c][i + j] - bm);
 	}
-	if (n < KS_CONF_QN_MIN_PT) return;/* 最少60点 */
+	/* 每侧保底一块|2026.11.12用户决策: 某侧放不下整块但空白≥8点时,取整窗残块
+	 * (块长=窗口长,紧贴排除区边),避免宽标窄门两侧全空、σ无从估计("数量不够
+	 * 也可以");常规工况(该侧≥1整块)不经过此处,行为不变 */
+	{
+		INT lwLen = lwE - lwS;
+		INT rwLen = rwE - rwS;
+		if (lwLen > 0 && lwLen < BL && lwLen >= 8 && n + lwLen <= KS_CONF_QN_MAXPT)
+		{
+			for (j = 0; j < lwLen; j++)
+			{
+				s_afQnBlk[j] = (REAL)d->auiFSampData_Filtered[c][lwS + j];
+			}
+			for (j = 1; j < lwLen; j++)/* 插入排序取中位(残块长≤BL≤缓冲维度) */
+			{
+				REAL key = s_afQnBlk[j];
+				k = j - 1;
+				while (k >= 0 && s_afQnBlk[k] > key) { s_afQnBlk[k + 1] = s_afQnBlk[k]; k--; }
+				s_afQnBlk[k + 1] = key;
+			}
+			bm = s_afQnBlk[lwLen / 2];
+			for (j = 0; j < lwLen; j++)
+				s_afQnResid[n++] = fabsf((REAL)d->auiFSampData_Filtered[c][lwS + j] - bm);
+		}
+		if (rwLen > 0 && rwLen < BL && rwLen >= 8 && n + rwLen <= KS_CONF_QN_MAXPT)
+		{
+			for (j = 0; j < rwLen; j++)
+			{
+				s_afQnBlk[j] = (REAL)d->auiFSampData_Filtered[c][rwS + j];
+			}
+			for (j = 1; j < rwLen; j++)
+			{
+				REAL key = s_afQnBlk[j];
+				k = j - 1;
+				while (k >= 0 && s_afQnBlk[k] > key) { s_afQnBlk[k + 1] = s_afQnBlk[k]; k--; }
+				s_afQnBlk[k + 1] = key;
+			}
+			bm = s_afQnBlk[rwLen / 2];
+			for (j = 0; j < rwLen; j++)
+				s_afQnResid[n++] = fabsf((REAL)d->auiFSampData_Filtered[c][rwS + j] - bm);
+		}
+	}
+	if (n < KS_CONF_QN_MIN_PT_LOOSE) return;/* 保底模式下限16点(每侧残块≥8);
+	 * 常规整块n≥BL≥16自动满足,原60点门槛随"每侧保底一块"决策放宽|2026.11.12 */
 
 	/* MAD+离群剔除:升序排序后剔除即前缀(与opt双缓冲数值等价)
 	 * |wang.c+双置信度融合 2026.11.9.165510 */
@@ -286,7 +332,9 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 		if (s_afQnResid[i] > thr) break;/* 已升序,其后全部超限 */
 		nKept++;
 	}
-	if (nKept < KS_CONF_QN_KEEP_MIN || (REAL)nKept < KS_CONF_QN_KEEP_RATIO * (REAL)n)
+	/* 绝对40点线取消仅留60%比例线:n≥67时0.6n≥40.2,与原判定完全等价;
+	 * 小n(仅保底模式/粗采小门可达)按比例放宽|2026.11.12 */
+	if ((REAL)nKept < KS_CONF_QN_KEEP_RATIO * (REAL)n)
 	{
 		return;
 	}
