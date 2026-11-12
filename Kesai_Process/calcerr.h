@@ -1,0 +1,320 @@
+/*
+ * calcerr.h
+ *
+ *  Created on: Jul 29, 2024
+ *      Author: 17500
+ */
+
+#ifndef CALCERR_H_
+#define CALCERR_H_
+
+#include "base.h"
+
+//ENUM_MarkType
+#define MARK_TYPE_LINE		 1//(*Line Mark|*)
+#define MARK_TYPE_TRAPE_VFLP 2//(*Vert Forward Left Positive|*)
+#define MARK_TYPE_TRAPE_VFLN 3//(*Vert Forward Left Negitive|*)
+#define MARK_TYPE_TRAPE_VBLP 4//(*Vert Backward Left Positive|*)
+#define MARK_TPYE_TRAPE_VBLN 5//(*Vert Backward Left Negitive|*)
+#define MARK_TYPE_TRIANGLE_R 6//(*2018.8.28.135823\三角标-定点在右边|*)
+#define MARK_TYPE_TRIANGLE_L 7//(*2018.8.28.135828\三角标-定点在左边|*)
+//ENUM_MarkArrange
+#define MARK_ARRANGE_VFOR	1//(*纵顺|*)
+#define MARK_ARRANGE_VREV	2//(*纵逆|*)
+#define MARK_ARRANGE_HFOR	3//(*横顺|*)
+#define MARK_ARRANGE_HREV	4//(*横逆|*)
+#define MARK_ARRANGE_OMK	5//(*单标记|*)
+
+//平均处理@int16_t@2026.4.25.134615+
+#define MAX_AVERAGE_NUM 20//最大平均个数
+
+#pragma pack(1)
+typedef struct{
+	short							i_iEachGatePointsNr;		//(*每个门内包含的点数|*)
+	short							i_iRSamplePointsNum;	//粗采样数据点数
+	unsigned short					i_wParsingKeyWord;		//(*单标记就只看T1路的第1个信号;
+											//	.纵向 :
+											//	.bit0=0/T1用第1个信号;=1/T1用第2个信号
+											//	.bit1=0/T2用第1个信号;=1/T2用第2个信号
+											//	.横向 :
+											//	.bit2=0/T1用第1个信号;=1/T1用第2个信号
+											//	.bit3=0/T2用第1个信号;=1/T2用第2个信号
+											//	.bit4=1 T1信号第1个门内是反极性
+											//	.bit5=1 T2信号第1个门内是反极性
+											//	.bit6=1 T1信号第2个门内是反极性
+											//	.bit7=1 T2信号第2个门内是反极性
+											//	.//bit8
+											//	.//bit9
+											//	.bit10=1 T1小信号
+											//	.bit11=1 T2小信号
+											//	.//bit12
+											//	.//bit13
+											//	.bit14=1 计算两次基线
+											//	.bit15=0 用粗采样来计算基线;=1用精采样计算基线
+											//	|*)
+	short							i_iThresNum;				//(*Threshold used num|*)
+	float							i_rSysPrecision;			//(*system finesample precision| 0.01mm|*)
+	short							i_iMarkTypId;
+	short							i_iMarkArrangeId;
+	short							i_iMarkVLen;				//(*Vert-side length of trilateral mark|*)
+	short							i_iMarkHLen;				//(*bottom side length of trilateral mark|*)
+	short							i_iAdjustV;				//
+	short							i_iAdjustH;				//
+	unsigned char					i_byAverage_v;			//(*v-average|*)
+	unsigned char					i_byAverage_h;			//(*h-average|*)
+	short							i_iFilterPoints;			//(*filter points|*)
+	float							i_lrSmallSignalValue;	//(*small signal value| 0-8.2v = 0~65535|*)
+	float							i_lrMinimumLimitSampVal;//(*200mv最低下限|65535=8200mv; 1598.415=200mv; 3996.037=500mv|*)
+	int								i_diGateAbsOffsetPhy;	//
+	short								i_iStandardMarkSpacings;	//
+	unsigned char					i_xOMK0_PosConfirmed;	//
+	float							i_lrGirth;				//
+	short							i_iGateSa;				//
+	short							i_iGateSaEx;				//
+	short							i_iGateWidthPhy;			//
+	unsigned char					i_xFlag_Gate_double;
+	unsigned char					i_xFlag_Follow_Other_V;
+	unsigned char					i_xFlag_Follow_Other_H;
+	float							i_alrBase[2];
+	unsigned char 		i_byColorId_Cur;//2023.7.3.154832增加当前色序输入
+	//2023.5.22.155422程序里面需要用到的原来ARM里的静态变量
+	unsigned char					axThresLevelErrorValidH[3]									;//
+	float							alrThresLevelErrorH[3]									;//
+	unsigned char					axThresLevelErrorValidV[3]									;//
+	float							alrThresLevelErrorV[3]									;//
+	//误差平均的内容
+	short							iBufferedIndexRd											;//(*buffered array read index|*)
+	short							iBufferedIndexWr											;//(*buffered array write index|*)
+	short							iPushedErrItemsAtLeast										;//
+	short							iBufferedIndexRd_H											;//(*buffered array read index|*)
+	short							iBufferedIndexWr_H											;//(*buffered array write index|*)
+	short							iPushedErrItemsAtLeast_H										;//
+	float							alrErrorBufferedV[20]										;
+	float							alrErrorBufferedH[20]										;
+	short							iCountForSignalLost;
+	short							iCountForSignalLost_H;
+	float							alrThresLevelErrorV_2[2][3];
+	float							alrThresLevelErrorH_2[2][3];
+	float							alrVerrRes_2[2];
+	float							alrHerrRes_2[2];
+	float							alrScopeLevelRatio[3];
+	unsigned char					xFlag_OMK0_PosConfirmed;
+	short							iGateSa_Rec;
+	float							arTemp_FilterPoint[3];
+}StCalcParam_In;
+
+typedef struct{
+	WORD auiMinValue[2]												;// (*1=T1采样最小值;2=T2采样最小值*)
+	INT	 aiMinValuePos[2]										;// (*1=T1采样最小值出现的位置;2=T2采样最小值出现的位置*)
+	WORD auiMaxValue[2]												;// (*1=T1采样最大值;2=T2采样最大值*)
+	INT	 aiMaxValuePos[2]										;// (*1=T1采样最大值出现的位置;2=T2采样最大值出现的位置*)
+	INT	 aiPeakValuePos[2]										;// (*峰值点出现的位置|反极性是最小点;正极性是最大点;*)
+	REAL alrBase[2]													;// (*1=T1路基线;2=T2路基线*)
+	//WORD auiFSampData_Filtered[2][4000]						;// (*1=T1过滤后的采样数据;2=T2过滤后的采样数据*)
+	WORD auiFSampData_Filtered[2][3000]						;// (*1=T1过滤后的采样数据;2=T2过滤后的采样数据*)//2024.8.21.195610先把这个空间减小一点，后面可能就不用了
+	REAL alrSignalEffectiveScope[2]									;// (*1=T1信号有效采样幅度;2=T2信号有效幅度采样*)
+	REAL alrThreshold[2][3]									;// (*1,n=T1的第n段阀值;2,n=T2的第n段阀值;*)
+	BYTE abyEdgeCrossPointTotalNumLR[2][3][2]				;// (*1,n,1=T1的第n段阀值前沿交点计数;2,n,2=T2的第n段阀值后沿交点计数|*)
+	REAL alrEdgeCrossPointPosLR[2][3][2]					;// (*1,n,1=T1的第n段阀值和信号前沿相交点位置;2,n,2=T2的第n段阀值和信号后沿相交点位置*)
+	BYTE axThresholdLevelValidFlag[2][3]							;// (*该阀值前后沿都找到就置TRUE*)
+	REAL alrMidlinePos[2][3]									;// (*1,n=T1的第n段参与纵向误差计算的位置pos;2,n=T2的第n段参与纵向误差计算的位置pos*)
+	REAL alrWidthOfThresholdLevel[2][3]						;// (*1,n=T1的第n段阀值切割的信号宽度;2,n=T2的第n段阀值切割的信号宽度*)
+}StSignalParsingGroupDetail;//(*两组波门内部信号的分析细节|*)
+
+typedef struct{
+	WORD uiThreshold			;//(*阀值线|threshold level value||*)
+	INT aiEdgeLR[2]				;//(*左右边沿位置|left&right edge||*)
+	INT iMidline				;//(*中心线位置|middle line for calculation||*)
+	BYTE byEdgeValid			;//(*边沿有效标志|edge valid flag||*)
+	INT iVerrThresholdLevel		;//(*该阀值线的纵向误差|threshold calculation value for vert||*)
+	INT iHerrThresholdLevel		;//(*该阀值线的横向误差|threshold calculation value for horz||*)
+}StDetailOfThresholdLevel;
+
+typedef struct{
+	INT o_iRtn_V										;//(*错误代码|0.成功|-1.参数无效|-2.找基线失败|-3.计算误差丢失|*)
+	INT o_iRtn_H										;//(*错误代码|0.成功|-1.参数无效|-2.找基线失败|-3.计算误差丢失|*)
+	INT o_iVResult									;//(*纵向输出误差|*)
+	INT o_iHResult									;//(*横向输出误差|*)
+	BYTE o_byFlyFlag_V;//纵向新飞点逐帧判定码(剔除在calcerr.c内N幅平均之前完成,此码供KS_FB_ProSample置byStsV bit2;丢失帧写KS_FLY_JUDGE_GOOD,丢失不算飞点)|Yang.zj+用于新飞点检测 2026.10.24.103254
+	BYTE o_byFlyFlag_H;//横向新飞点逐帧判定码|Yang.zj+用于新飞点检测 2026.10.24.103254
+	REAL io_rOMK0_PosConfirmed						;//单标记确认误差位置
+	INT aiVerror_Gate[2];//计算所得的真实误差纵向-0-跟前色-1-跟任意色
+	INT aiHerror_Gate[2];//计算所得的真实误差横向-0-跟前色-1-跟任意色
+	StSignalParsingGroupDetail astStSignalParsingGroupDetail[2]		;//(*两组波门内部信号的分析细节|*)
+}StCalcParam_Out;//(*输出变量*)
+
+typedef struct{
+	BYTE i_xIsValidError;
+	INT i_iError_0_01mm;
+	INT i_iVariationBaseValue;
+	INT i_iBoundaryError_0_01mm;
+	INT i_iErrorLevel_0_01mm;
+	INT i_iVariationVariationMin;
+	INT i_iVariationVariationMax;
+}StPickOutFakePointIn;//飞点剔除输入变量
+#pragma pack()
+
+//2023.5.24.101338优化误差检测-与主版本同步
+short KS_CalcError_ARC(
+			unsigned short *i_puiFSampleDataSa1,
+			unsigned short *i_puiFSampleDataSa2,
+			unsigned int i_dwAdrStCalcParam_In,
+			unsigned int i_dwAdrStCalcParam_Out);
+
+short KS_CalcError_ARC_Version(char **msg);
+
+//IO初始化
+void GPIOInit(void);
+//飞点剔除
+//增加横向飞点判断2023.5.24.103307
+
+void KS_FB_PickOutFakePoint_V(  StPickOutFakePointIn stStPickOutFakePointIn,
+								BYTE *o_pxFakeIsConfirmed);
+//增加横向飞点判断2023.5.24.103307
+void KS_FB_PickOutFakePoint_H(  StPickOutFakePointIn stStPickOutFakePointIn,
+								BYTE *o_pxFakeIsConfirmed);
+
+//2026.4.25.134524+平均处理函数
+float KS_Average(int8_t xAverageEn,//平均使能
+		int16_t idata,//数据
+		uint8_t byAverageNum,//平均次数
+		int16_t aidatabuff[MAX_AVERAGE_NUM],//缓存的数组
+		uint8_t* pbyCurIndex,//当前的索引@从0开始
+		uint8_t* pxDataInitDne);//平均的数据初始化完成
+//#pragma pack(1)
+//
+//typedef struct{
+//	short i_iEachGatePointsNr;		//精采样点数
+//	unsigned char i_xCalcBaselineByData_FS_OR_RS;//计算基线//TRUE:精采样
+//	float i_rMinimumLimitSampVal;//小信号幅度
+//	float i_rBaseLine_Rs;//粗采样基线
+//	unsigned char i_byThresNum;//阀值数量-3
+//	unsigned char i_byMarkTypeId;//色标形式
+//	unsigned char i_xSignalPolarityIsNegative;//信号极性
+//	unsigned char i_xCalcErr_V_Single;//计算单眼跟1色纵向误差
+//	unsigned char i_xUseErr_V_Single;//使用单眼跟1色纵向误差
+//	unsigned char i_xCalcErr_H_Single;//计算单眼跟1色纵向误差
+//	unsigned char i_xUseErr_H_Single;//使用单眼跟1色纵向误差
+//	unsigned char i_xCalcErr_V_Follow_1U;//计算跟1色纵向误差-间接跟
+//	unsigned char i_xUseErr_V_Follow_1U;//使用跟1色纵向误差-间接跟
+//	unsigned char i_xCalcErr_H_Follow_1U;//计算跟1色纵向误差-间接跟
+//	unsigned char i_xUseErr_H_Follow_1U;//使眼跟1色纵向误差-间接跟
+//	//2024.8.26.001457
+//	float i_rInversedPrecision;//系统精度，实际计算值
+//	short i_iMarkArrangeModal;//标序
+//	unsigned char i_byColorIdCurrent;//色序
+//	unsigned char i_byColorIdFollow;//跟踪色序
+//	short i_iAverage_V;//纵向平均
+//	short i_iAverage_H;//横向平均
+//	float i_rAdjust_V;//纵向修正
+//	float i_rAdjust_H;//横向修正
+//	unsigned char i_byTriMark_SideC;//梯形色标直边
+//	unsigned char i_byTriMark_SideB;//梯形色标直边
+//	//平均需要的内容
+//	short							iBufferedIndexRd											;//(*buffered array read index|*)
+//	short							iBufferedIndexWr											;//(*buffered array write index|*)
+//	short							iPushedErrItemsAtLeast										;//
+//	short							iBufferedIndexRd_H											;//(*buffered array read index|*)
+//	short							iBufferedIndexWr_H											;//(*buffered array write index|*)
+//	short							iPushedErrItemsAtLeast_H										;//
+//	float							alrErrorBufferedV[20]										;
+//	float							alrErrorBufferedH[20]										;
+//	short							iCountForSignalLost;
+//	short							iCountForSignalLost_H;
+//	//输出变量
+//	short o_iRtn_V										;//(*错误代码|0.成功|-1.参数无效|-2.找基线失败|-3.计算误差丢失|*)
+//	short o_iRtn_H										;//(*错误代码|0.成功|-1.参数无效|-2.找基线失败|-3.计算误差丢失|*)
+//	short o_iVResult									;//(*纵向输出误差|*)
+//	short o_iHResult									;//(*横向输出误差|*)
+//	//输出监控变量
+//	short iResult_V_Followpre;
+//	short iResult_H_Followpre;
+//	short iResult_V_Follow_1U;
+//	short iResult_H_Follow_1U;
+//	short iResult_V_Follow_1U_New;
+//	short iResult_H_Follow_1U_New;
+//	//2024.8.31.125632||峰值要处理一下滤波------------
+//	unsigned short auiPeakValue[2][16][10];//两路信号、16组波形、最大支持19次滤波
+//	unsigned char byNum_PeakValueFilter;//滤波次数
+//	unsigned char abyCnt_PeakValue[2][16];
+//
+//}StCalcParam_Use_New;
+
+//#pragma pack()
+//
+//unsigned char KS_Singal_Process(
+//		unsigned char i_xEn,
+//		unsigned short* i_puiFineData,
+//		float i_rBase,
+//		StCalcParam_Use_New* i_pstStCalcParam_Use_New,
+//		float i_parWidthOfThressholdLevel[3],
+//		float i_parMidlinePos[3],
+//		unsigned char i_paxThresholdLevelValidFlag[3],
+//		unsigned char i_byNum_PeakValueFilter,//波形峰值滤波次数
+//		unsigned short auiData_Filter[10],//对波形峰值进行滤波
+//		unsigned char* i_pbyCnt_PeakValueFilter
+//);
+//
+//void KS_FilterPoints_FS(
+//		unsigned short* i_puiFineData,//精采样数据起始
+//		short i_iEachGatePointsNr,//点数
+//		unsigned short* i_puiMinValue,//最小值
+//		short* i_piMinValuePos,//最小值位置
+//		unsigned short* i_puiMaxValue,//最大值
+//		short* i_piMaxValuePos,//最大值位置
+//		unsigned short i_pauiFSData_Filtered[1500],//滤波后的数据
+//		unsigned short i_pauiTemp_FilerPort[3],//滤波需要的数组
+//		float* i_prSignalEffectiveScope,//有效幅度
+//		short* i_piPeakValuePos,//峰值位置
+//		unsigned char i_byFilterPoints,//滤波次数
+//		unsigned char i_xSignalPolarityIsNegative,//极性
+//		float i_rBase,//基线
+//		//2024.8.31.170638
+//		unsigned char i_byNum_PeakValueFilter,//波形峰值滤波次数
+//		unsigned short auiData_Filter[10],//对波形峰值进行滤波
+//		unsigned char* i_pbyCnt_PeakValueFilter
+//);
+//2026.4.21.153306 屏蔽这段代码
+////2024.8.17.152017增加一种间接计算根1色误差方法niu.j||不知到空间够不够
+//unsigned char KS_CalcErr_ARC_New(
+//		unsigned short* i_puiFSampleDataSa1,//精采样数据起始
+//		unsigned short* i_puiFSampleDataSa2,
+//		//StAxisParam* i_pstStAxisParam,
+//		//StGrpParam* i_pstStGrpParam,
+//		float i_arBase[2],
+//		StCalcParam_Use_New* i_pstStCalcParam_Use_New
+//);
+//
+//void KS_CalcBaselineByData_FS_Singal(unsigned short *i_puiFSdata,//精采样数据入口地址1
+//		short i_iTotalPoints,//精采样点数|默认按0.02系统精度是20mm宽度
+//		unsigned char i_xIsNegPolarity,//信号极性|原始采集信号反极性，显示做了反向处理
+//		unsigned char i_xCalibrateTwice,//二次校准基线
+//		float* o_prBase);
+//
+////2024.8.26.105544+
+////获取阀值位置,输出阀值位置和标志
+//void KSGetThresholdPos(float baseline,//基线值@波形是原始波形,该值是大值
+//						unsigned char signalpolarityisnegative,//正反信号标志@有效了为反信号，正极性
+//						float scopelevelratio,//阀值比例,默认 0.25 0.5 0.7
+//						short fsdata_num,//精采样点数
+//						unsigned short afsdata_filter[],//auiFSData_Filtered[1500],//滤波后的数据指针
+//						float signaleffectivescope,//有效幅值@该值是小值
+//						short peakvaluepos,//峰值位置
+//						float smallsignalval,//小信号的值
+//						//输出
+//						unsigned char* pfindit_frontedge,//找到了前沿标志
+//						float* ppos_frontedge,//前沿位置
+//						unsigned char* pfindit_backedge,//找到后沿标志
+//						float* ppos_backedge);//后沿位置*/
+//
+//void KSFsDataFilter(float baseline,//基线值@波形是原始波形
+//				char signalpolarityisnegative,//正反信号标志@有效了为反信号，正极性@正常是1
+//				unsigned char filterpoints,//滤波次数
+//				unsigned short afsdata[],//精采样数据数组
+//				short fsdata_num,//精采样点数
+//				//输出
+//				unsigned short afsdata_filter[],//滤波后的数据
+//				float* psignaleffectivescope,//有效幅值
+//				short* ppeakvaluepos);//峰值位置
+
+#endif /* CALCERR_H_ */

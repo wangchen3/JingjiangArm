@@ -1,0 +1,28 @@
+# ===== 构建产物 =====
+Debug/
+Release/
+*.o
+*.d
+*.cyclo
+*.su
+*.elf
+*.bin
+*.hex
+*.map
+*.armbin
+
+# ===== 组态屏(MCGS)工程与备份/通道表,非ARM源码 =====
+*.MCP
+*.MCP.bak
+*.MCP.user.bak
+*.ldb
+ModbusRTU数据转发设备.csv
+
+# ===== 重复的变体工程与成品固件 =====
+16D_arm_JinJiang_newest/
+bootloader/
+
+# ===== IDE本地/调试配置 =====
+.settings/
+*.launch
+*.cfg

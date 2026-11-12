@@ -1,0 +1,3148 @@
+/*
+ * calcerr.c
+ *
+ *  Created on: Jul 29, 2024
+ *      Author: 17500
+ */
+
+#include "calcerr.h"
+#include "base.h"
+#include "calcbase.h"
+#include "math.h"
+#include "stdlib.h"
+#include "led.h"
+#include "KS_FB_VISU.h"
+//新飞点剔除模块(总开关KS_USE_NEW_FLY_REMOVE在此头文件内)|Yang.zj+用于新飞点检测 2026.10.24.103254
+#include "ks_fly_remove.h"
+
+//2026.4.21.174028屏蔽
+//extern StCalcParam_Use_New stStCalcParam_Use_New;
+unsigned short auiFSampData_Filtered[1500];//滤波后的数据
+
+short KS_CalcError_ARC(unsigned short *i_puiFSampleDataSa1, unsigned short *i_puiFSampleDataSa2, unsigned int i_dwAdrStCalcParam_In, unsigned int i_dwAdrStCalcParam_Out)
+{
+
+	//定义临时变量
+	short iN														;//
+	float lrTmpVal													;//(*临时lreal型变量|*)
+	unsigned short *puiItem											;//(*访问uint数据指针|*)
+	unsigned char xReqCommit										;//
+	short iSig														;//
+	short iPoint													;//
+	short iLevel													;//
+	short iEdgeTotalFoundNum										;//
+	unsigned char xProcTinySignal									;//
+	unsigned char xCanParsingThresholdLevel=0						;//
+	unsigned char xSignalPolarityIsNegative							;//
+	short  iErrorItemCountH											;//(*横向有效误差计数|*)
+	short  iErrorItemCountV											;//(*纵向有效误差计数|*)
+	float  lrAdditionCX												;//(*delta-cx|*)
+	short  iIndex														;//
+	float  lrSumTotal												;//
+	float  lrVerrResult												;//
+	float  lrHerrResult												;//
+	unsigned char xIsNegPolarity[2];
+	float alrBase[2];
+	unsigned short* puiFSampleDataSa1_Ex;
+	unsigned short* puiFSampleDataSa2_Ex;
+	short iGrp;
+	StCalcParam_In* pstStCalcParam_In;
+	StCalcParam_Out* pstStCalcParam_Out;
+
+	//定义结束2023.5.22.160615
+	//非法地址判断
+	if(i_dwAdrStCalcParam_In!=0 && i_dwAdrStCalcParam_Out!=0 && i_puiFSampleDataSa2!=0 && i_puiFSampleDataSa1!=0)
+		;
+	else
+	{
+		return -1;
+	}
+	//首先需要获取输入输出参数地址
+	pstStCalcParam_In= (StCalcParam_In*)i_dwAdrStCalcParam_In;
+	pstStCalcParam_Out= (StCalcParam_Out*)i_dwAdrStCalcParam_Out;
+
+	//清除单标记误差确认标志
+	//1.波门位置变化过大->20mm就需要重新确认
+	//2.设置非单标记，清除标志
+	if(pstStCalcParam_In->iGateSa_Rec != pstStCalcParam_In->i_iGateSa)//波门位置发生改变
+	{
+		if(ABS(pstStCalcParam_In->iGateSa_Rec - pstStCalcParam_In->i_iGateSa) >
+			(pstStCalcParam_In->i_iGateWidthPhy*pstStCalcParam_In->i_iRSamplePointsNum/pstStCalcParam_In->i_lrGirth))//波门变化量>一个波门宽度
+		{
+			if(pstStCalcParam_In->xFlag_OMK0_PosConfirmed)//如果有误差确认完成标志，将标志清除
+			{
+				pstStCalcParam_In->xFlag_OMK0_PosConfirmed = 0;
+			}
+		}
+	}
+	pstStCalcParam_In->iGateSa_Rec = pstStCalcParam_In->i_iGateSa;
+	if(pstStCalcParam_In->i_iMarkArrangeId != MARK_ARRANGE_OMK)//选择非单标记时，直接清除误差确认标志
+	{
+		if(pstStCalcParam_In->xFlag_OMK0_PosConfirmed)
+		{
+			pstStCalcParam_In->xFlag_OMK0_PosConfirmed = 0;
+		}
+	}
+
+	if ((pstStCalcParam_In->i_wParsingKeyWord&0x1<<15)>>15==1)  //(*用门内基线|精采样数据计算基线*)
+	{
+		xIsNegPolarity[0]= GetBit(pstStCalcParam_In->i_wParsingKeyWord,4);
+		xIsNegPolarity[1]= GetBit(pstStCalcParam_In->i_wParsingKeyWord,5);
+		//精采样基线计算，使用门内基线时用到
+		KS_CalcBaselineByData_FS(i_puiFSampleDataSa1,//精采样数据入口地址1
+			i_puiFSampleDataSa2,//精采样数据入口地址2
+			pstStCalcParam_In->i_iEachGatePointsNr,//精采样点数|默认按0.02系统精度是20mm宽度
+			xIsNegPolarity,//信号极性|原始采集信号反极性，显示做了反向处理
+			1,//二次校准基线
+			alrBase);
+
+		//(*第1路信号的第1个门内信号*)
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrBase[0]= alrBase[0]; //(*第1组的t1基线*)
+		//(*第2路信号的第1个门内信号*)
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrBase[1]= alrBase[1]; //(*第1组的t2基线*)
+
+		//第二组波门内基线基线2023.4.25.163647
+		puiFSampleDataSa1_Ex= i_puiFSampleDataSa1+ pstStCalcParam_In->i_iEachGatePointsNr;
+		puiFSampleDataSa2_Ex= i_puiFSampleDataSa2+ pstStCalcParam_In->i_iEachGatePointsNr;
+		xIsNegPolarity[0]= GetBit(pstStCalcParam_In->i_wParsingKeyWord,6);
+		xIsNegPolarity[1]= GetBit(pstStCalcParam_In->i_wParsingKeyWord,7);
+
+		KS_CalcBaselineByData_FS(puiFSampleDataSa1_Ex,//精采样数据入口地址1
+			puiFSampleDataSa2_Ex,//精采样数据入口地址2
+			pstStCalcParam_In->i_iEachGatePointsNr,//精采样点数|默认按0.02系统精度是20mm宽度
+			xIsNegPolarity,//信号极性|原始采集信号反极性，显示做了反向处理
+			1,//二次校准基线
+			alrBase);
+
+		//(*第1路信号的第2个门内信号*)
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrBase[0]= alrBase[0]; //(*第2组的t1基线*)
+		//(*第2路信号的第2个门内信号*)
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrBase[1]= alrBase[1]; //(*第2组的t2基线*)
+	}
+	else //(*粗采样计算*)
+	{
+		//(*第1路信号基线*)
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrBase[0]= 
+			pstStCalcParam_In->i_alrBase[0]*256; //(*第1组的t1基线*)
+		//第二组波门粗采样基线与第一组相同2023.4.25.164016
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrBase[0]= 
+			pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrBase[0];
+
+		//	(*第2路信号基线*)
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrBase[1]= 
+			pstStCalcParam_In->i_alrBase[1]*256; //(*第1组的t2基线*)
+		//第二组波门粗采样基线与第一组相同2023.4.25.164016
+		pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrBase[1]= 
+			pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrBase[1];
+	
+	}
+
+	//(*Rev. han.dp@2017-04-01 10:08:15
+	//.对精采样数据进行最大值、最小值、以及滤波后的数据
+	//.Rev. han.dp@2017-04-19 14:37:13
+	//.增加成两组波门信号
+	//*)
+	for(iGrp=0;iGrp<2;iGrp++)
+	{
+		for(iSig=0;iSig<2;iSig++)
+		{
+			if(iSig==0)//T1-2023.4.25.164134重新获取对应精采样-双波门
+			{
+				if(iGrp==0)//T1在第一组
+				{
+					puiItem= i_puiFSampleDataSa1;
+				}
+				else//T1在第二组
+				{
+					puiItem= i_puiFSampleDataSa1+pstStCalcParam_In->i_iEachGatePointsNr;
+				}
+
+			}
+			else//T2-2023.4.25.164312
+			{
+				if(iGrp==0)//T1在第一组
+				{
+					puiItem= i_puiFSampleDataSa2;
+				}
+				else//T1在第二组
+				{
+					puiItem= i_puiFSampleDataSa2+pstStCalcParam_In->i_iEachGatePointsNr;
+				}
+			}
+
+			//		(*Rev. han.dp@2017-04-19 16:37:17
+			//		.采样数据转储,进行滤波,和极值点寻找
+			//		*)
+			pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMinValue[iSig]= *puiItem;
+			pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiMinValuePos[iSig]= 0;
+			pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMaxValue[iSig]= *puiItem;
+			pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiMaxValuePos[iSig]= 0;
+			//(*逐点找到最大值和最小值以及点对应的位置*)
+			for(iPoint=0;iPoint<pstStCalcParam_In->i_iEachGatePointsNr;iPoint++)
+			{
+				if (pstStCalcParam_In->i_iFilterPoints>1 && iPoint>=(pstStCalcParam_In->i_iFilterPoints-1))  //(*达到可以开始滤波的条件*)
+				{
+					lrSumTotal= 0;
+					//累加总和
+					pstStCalcParam_In->arTemp_FilterPoint[2]= *puiItem;
+					for(iN=0; iN<pstStCalcParam_In->i_iFilterPoints; iN++)
+					{
+						lrSumTotal= lrSumTotal + pstStCalcParam_In->arTemp_FilterPoint[iN];
+					}
+					pstStCalcParam_In->arTemp_FilterPoint[0]= pstStCalcParam_In->arTemp_FilterPoint[1];
+					pstStCalcParam_In->arTemp_FilterPoint[1]= pstStCalcParam_In->arTemp_FilterPoint[2];
+					//计算当前点滤波后的值
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint]=
+						(WORD)(lrSumTotal/pstStCalcParam_In->i_iFilterPoints);
+				}
+				else// (*达不到滤波条件就把真实数据记录下来*)
+				{
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint]=*puiItem;
+					pstStCalcParam_In->arTemp_FilterPoint[iPoint]= *puiItem;//前两个点赋值2023.4.28.142148
+				}
+
+				if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint] >
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMaxValue[iSig])
+				{
+					//(*更新最大值的信息*)
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMaxValue[iSig]=
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint];
+					//(*2019.03.14.110206|最大值取值bug*)
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiMaxValuePos[iSig]= iPoint;
+				}
+				if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint] <
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMinValue[iSig])
+				{
+					//(*更新最小值的信息*)
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMinValue[iSig]=
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint];
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiMinValuePos[iSig]= iPoint;
+				}
+				puiItem= puiItem+1; //(*next sample point*)
+			}
+
+			//			(*Rev. han.dp@2017-05-30 15:15:17
+			//			.采样波形的极性判断
+			//			*)
+
+			//2023.4.25.164501重新处理极性判断-两组波门内
+			if(iGrp==0)//第一组波门内
+			{
+				if(iSig==0)
+				{
+					xSignalPolarityIsNegative= GetBit(pstStCalcParam_In->i_wParsingKeyWord,4);
+				}
+				else
+				{
+					xSignalPolarityIsNegative= GetBit(pstStCalcParam_In->i_wParsingKeyWord,5);
+				}
+			}
+			else
+			{
+				if(iSig==0)
+				{
+					xSignalPolarityIsNegative= GetBit(pstStCalcParam_In->i_wParsingKeyWord,6);
+				}
+				else
+				{
+					xSignalPolarityIsNegative= GetBit(pstStCalcParam_In->i_wParsingKeyWord,7);
+				}
+			}
+
+			//(*信号的有效幅度统计*)
+			if (xSignalPolarityIsNegative==1) //(*反极性*)
+			{
+				//(*峰值位置||反极性就是最小值的位置*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiPeakValuePos[iSig]=
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiMinValuePos[iSig];
+
+				//(*信号有效幅度||反极性就是基线值-最小值*)
+				lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrBase[iSig]-
+					(float)(pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMinValue[iSig]);
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrSignalEffectiveScope[iSig]= lrTmpVal;
+			}
+			else
+			{
+				//(*峰值位置||正极性就是最大值的位置*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiPeakValuePos[iSig]=
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiMaxValuePos[iSig];
+
+				//(*信号有效幅度||正极性就是最大值-基线*)
+				lrTmpVal= (float)(pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiMaxValue[iSig])-
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrBase[iSig];
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrSignalEffectiveScope[iSig]= lrTmpVal;
+			}
+
+
+			//			(*han.dp@2017-05-30 15:24:41
+			//			.算出三段阀值的采样线Y
+			//			*)
+			for(iLevel=0; iLevel<3; iLevel++)
+			{
+				//初始化
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].axThresholdLevelValidFlag[iSig][iLevel]= 0; //(*复位标志*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][0]= 0; //(*阀值和信号相交点前沿计数初始化*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][1]= 0; //(*阀值和信号相交点后沿计数初始化*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][0]= 0; //(*前沿位置初始化*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][1]= 0; //(*后沿位置初始化*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrMidlinePos[iSig][iLevel]= 0; //(*纵向定位线初始化*)
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrWidthOfThresholdLevel[iSig][iLevel]= 0; //(*阀值切割面的宽度初始化*)
+
+				//(*han.dp@2017-04-19 17:52:00
+				//.算出阀值位置
+				//*)
+				lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrBase[iSig];
+				if (xSignalPolarityIsNegative==1)
+				{
+					//(*反极性从基线往下减*)
+					lrTmpVal= lrTmpVal-pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrSignalEffectiveScope[iSig]*pstStCalcParam_In->alrScopeLevelRatio[iLevel];
+				}
+				else
+				{
+					//(*正极性从基线往上加*)
+					lrTmpVal= lrTmpVal+pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrSignalEffectiveScope[iSig]*pstStCalcParam_In->alrScopeLevelRatio[iLevel];
+				}
+				//阀值位置
+				pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel]= lrTmpVal;
+			}
+
+			//			(*han.dp@2017-05-30 15:34:58
+			//			.小信号误差计算
+			//			*)
+			if (iSig==0)
+			{
+				//获取小信号处理标志--2020.6.17.151044||niu.j//改用getbit函数
+				xProcTinySignal= GetBit(pstStCalcParam_In->i_wParsingKeyWord ,10);
+			}
+			else
+			{
+				xProcTinySignal= GetBit(pstStCalcParam_In->i_wParsingKeyWord ,11);
+			}
+
+			if (xProcTinySignal==1 &&
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrSignalEffectiveScope[iSig]<
+					pstStCalcParam_In->i_lrMinimumLimitSampVal)
+			{
+				//(*想处理小信号,但是信号实在小到只能放弃*)
+				xCanParsingThresholdLevel= 0;
+			}
+			else if ((xProcTinySignal==0) &&
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrSignalEffectiveScope[iSig]<
+					pstStCalcParam_In->i_lrSmallSignalValue)
+			{
+				//(*不要求处理小信号,但信号可能进入容易产生异常误差电压值以下了(默认:500mv)|也放弃处理好了*)
+				xCanParsingThresholdLevel= 0;
+			}
+			else
+			{
+				//(*正常情况是需要根据阀值进行误差计算的...*)
+				xCanParsingThresholdLevel= 1;
+			}
+
+			//		(*han.dp@2017-04-19 18:05:16
+			//		.从峰值往左/右两边进行寻找相交沿
+			//		*)
+			if (xCanParsingThresholdLevel==1)
+			{	//(*前沿|Front edge*)
+				for(iPoint=(pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiPeakValuePos[iSig]-1); iPoint>0; iPoint--)
+				{
+					iEdgeTotalFoundNum= 0;
+					for(iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+					{
+						if(pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][0]==0)//(*前沿还没找到*)
+						{
+							xReqCommit=0;
+							if (xSignalPolarityIsNegative==1)// (*反信号|negative polarity*)
+							{
+								if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint]<=
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel] &&
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint-1]>
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel])
+								{
+									xReqCommit= 1; //(*相交点找到*)
+								}
+							}
+							else //(*正信号|positive polarity*)
+							{
+								if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint]>=
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel] &&
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint-1]<
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel])
+								{
+									xReqCommit= 1; //(*相交点找到*)
+								}
+							}
+							if (xReqCommit==1)
+							{
+								pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][0]= 1; //(*前沿找到1个*)
+								lrAdditionCX= KS_RatioL_ByThresholdCutting(
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel],
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint-1],
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint]); //(*算出跨点的%*)
+								pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][0]= (iPoint-1)+lrAdditionCX; //(*前沿位置*)
+							}
+						}
+						//(*统计找到前沿的数量*)
+						iEdgeTotalFoundNum= iEdgeTotalFoundNum+
+							pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][0];
+					}
+					if (iEdgeTotalFoundNum>=pstStCalcParam_In->i_iThresNum)
+					{
+						break; //(*前沿找够了*)
+					}
+				}
+
+				//(*后沿|Rear edge*)
+				for (iPoint=(pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].aiPeakValuePos[iSig]-1); iPoint<(pstStCalcParam_In->i_iEachGatePointsNr-1) ;iPoint++)
+				{
+					iEdgeTotalFoundNum= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+					{
+						if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][1]==0)//(*后沿还没找到*)
+						{
+							xReqCommit= 0;
+							if (xSignalPolarityIsNegative==1) // (*反信号|negative polarity*)
+							{
+								if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint]<=
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel] &&
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint+1]>
+										pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel])
+								{
+									xReqCommit= 1; //(*相交点找到*)
+								}
+							}
+							else //(*正信号|positive polarity*)
+							{
+								if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint]>=
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel] &&
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint+1]<
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel] )
+								{
+									xReqCommit= 1; //(*相交点找到*)
+								}
+							}
+
+							if (xReqCommit==1)
+							{
+								pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][1]= 1; //(*后沿找到1个*)
+								lrAdditionCX= KS_RatioL_ByThresholdCutting(
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrThreshold[iSig][iLevel],
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint],
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].auiFSampData_Filtered[iSig][iPoint+1]); //(*算出跨点的%*)
+								pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][1]= iPoint+lrAdditionCX; //(*后沿位置*)
+							}
+						}
+						//(*统计找到后沿的数量*)
+						iEdgeTotalFoundNum= iEdgeTotalFoundNum+
+							pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][1];
+					}
+					if (iEdgeTotalFoundNum>=pstStCalcParam_In->i_iThresNum)
+					{
+						break; //(*后沿找够了*)
+					}
+				}
+			}
+			//(*Rev. han.dp@2017-04-20 08:56:39
+			//.按照分析后的结果 把用来计算纵向误差的位置线
+			//.对应阀值档切割的截面宽度摘要出来
+			//*)
+			for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum ; iLevel++)
+			{
+				if (pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][0]==1 && //(*前沿找到*)
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].abyEdgeCrossPointTotalNumLR[iSig][iLevel][1]==1) //(*后沿找到*)
+				{
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].axThresholdLevelValidFlag[iSig][iLevel]= 1; //(*标记这个阀值有效*)
+
+					pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrWidthOfThresholdLevel[iSig][iLevel]=
+								pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][1]-
+								pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][0]; //(*阀值切割面宽度*)
+
+					switch (pstStCalcParam_In->i_iMarkTypId)//标记形式
+					{
+						case MARK_TYPE_TRAPE_VFLP: case MARK_TYPE_TRAPE_VFLN://(*Vert.Forward.Left<Positive/Negative>*)
+							pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrMidlinePos[iSig][iLevel]=
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][0];
+							break;//(*纵向用前沿*)
+
+						case MARK_TYPE_TRAPE_VBLP: case MARK_TPYE_TRAPE_VBLN://(*Vert.Backward.Left<Positive/Negative>*)
+							pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrMidlinePos[iSig][iLevel]=
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][1]; //(*纵向用后沿*)
+							break;
+						default: //(*Line-Mark*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrMidlinePos[iSig][iLevel]=
+									(pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][0]+
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[iGrp].alrEdgeCrossPointPosLR[iSig][iLevel][1])/2; //(*纵向取中心*)
+					}
+				}
+			} //(*end? 'FOR iLevel:=1 TO i_iThresNum BY 1 DO'*)
+		}
+	}
+
+	//(*Rev. han.dp@2017-04-20 10:09:16
+	//.初始化(在误差计算之前做这一步是很关键的)
+	//*)
+
+	iErrorItemCountV= 0;
+	iErrorItemCountH= 0;
+	for (iLevel=0; iLevel<3; iLevel++)
+	{
+		pstStCalcParam_In->axThresLevelErrorValidV[iLevel]= 0;
+		pstStCalcParam_In->alrThresLevelErrorV[iLevel]= 0;
+		pstStCalcParam_In->axThresLevelErrorValidH[iLevel]= 0;
+		pstStCalcParam_In->alrThresLevelErrorH[iLevel]= 0;
+	}
+
+	//从下面开始计算4组误差
+	/*
+		1.纵向跟前一色误差
+		2.纵向跟任意色误差
+		3.横向跟前一色误差
+		4.横向跟任意色误差
+
+	//2023.4.25.211752增加计算四组误差
+	static REAL alrThresLevelErrorV_2[2][3];//每组阀值对应
+	static REAL alrThresLevelErrorH_2[2][3];//每组阀值对应
+	static REAL alrVerrRes_2[2];
+	static REAL alrHerrRes_2[2];
+
+	 */
+	if(pstStCalcParam_In->i_xFlag_Gate_double)		//双波门打开2023.4.26.133659
+	{
+		switch (pstStCalcParam_In->i_iMarkArrangeId)
+		{	//纵向顺逆序需要计算四组，横顺横逆只需要计算跟前一色
+			case MARK_ARRANGE_VFOR:
+				//前一色-横向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					//跟前一色、T1和T2用第二组
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[0][iLevel] && //(*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[1][iLevel] ) //(*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountH= iErrorItemCountH+1; //(*横向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidH[iLevel]= 1; //(*当前阀值的横向误差有效*)
+
+						//(*横向误差为T1的宽度-T2的宽度*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrWidthOfThresholdLevel[0][iLevel];
+						lrTmpVal= lrTmpVal - pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrWidthOfThresholdLevel[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= lrTmpVal;
+					}
+
+					switch (pstStCalcParam_In->i_iMarkTypId)
+					{
+						case MARK_TYPE_TRAPE_VFLP: case MARK_TYPE_TRAPE_VBLP:
+							break;//(*Left.Positive*)
+						case MARK_TYPE_TRAPE_VFLN: case MARK_TPYE_TRAPE_VBLN://(*Left.Negative|左负横向误差再取反向*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= -pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel];
+							break;
+						default: //(*Line-Mark*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= 0;
+					}
+				}
+				if(iErrorItemCountH>0)
+				//开始计算实际误差2023.4.26.094740
+				{
+					pstStCalcParam_In->alrHerrRes_2[0]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++) //(*找横向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidH[iLevel]==1)
+						{
+							pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel];
+							break;
+						}
+					}
+					pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrHerrRes_2[0]*pstStCalcParam_In->i_rSysPrecision*100;
+
+					//(*算出横向误差*)
+					if (pstStCalcParam_In->i_iMarkTypId!=MARK_TYPE_LINE && pstStCalcParam_In->i_iMarkHLen!=0 && pstStCalcParam_In->i_iMarkVLen!=0)
+					{
+						pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrHerrRes_2[0]*pstStCalcParam_In->i_iMarkHLen/pstStCalcParam_In->i_iMarkVLen; //(*算出运动方向垂直的边差*)
+					}
+				}
+				else//横向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrHerrRes_2[0]= -32768;
+				}
+				iErrorItemCountH=0;
+
+				//前一色-纵向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[0][iLevel] &&// (*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[1][iLevel]) // (*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountV= iErrorItemCountV+1; //(*纵向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidV[iLevel]= 1; //(*当前阀值的纵向误差有效*)
+
+						//(*纵向误差由T1的位置-T2的位置*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrMidlinePos[0][iLevel];
+						lrTmpVal= lrTmpVal-pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrMidlinePos[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel]= lrTmpVal;
+					}
+				}
+				//	(*han.dp@2017-05-30 16:41:26
+				//	.开始得到实际的误差
+				//	*)
+				if (iErrorItemCountV>0)
+				{
+					pstStCalcParam_In->alrVerrRes_2[0]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)  //(*找纵向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidV[iLevel]==1)
+						{
+							pstStCalcParam_In->alrVerrRes_2[0]= pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel];
+							break;
+						}
+					}
+					//			(*han.dp@2017-04-20 13:26:25
+					//			.此时lrVerrResult和lrHerrResult保存了将要用的误差
+					//			.单位换算成物理距离: 0.01mm
+					//			*)
+					pstStCalcParam_In->alrVerrRes_2[0]= pstStCalcParam_In->alrVerrRes_2[0]*pstStCalcParam_In->i_rSysPrecision*100;
+				}
+				else//纵向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrVerrRes_2[0]= -32768;
+				}
+				iErrorItemCountV=0;
+
+				//任意色-横向
+				//后面发现任意色计算不需要		执行太多，顺逆序都一样2023.5.2.101118
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					//跟任意色、T1第一组和T2用第二组
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[0][iLevel] && //(*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel] ) //(*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountH= iErrorItemCountH+1; //(*横向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidH[iLevel]= 1; //(*当前阀值的横向误差有效*)
+
+						//(*横向误差为T1的宽度-T2的宽度*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrWidthOfThresholdLevel[0][iLevel];
+						lrTmpVal= lrTmpVal - pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrWidthOfThresholdLevel[0][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel]= lrTmpVal;
+					}
+
+					switch (pstStCalcParam_In->i_iMarkTypId)
+					{
+						case MARK_TYPE_TRAPE_VFLP: case MARK_TYPE_TRAPE_VBLP:
+							break;//(*Left.Positive*)
+						case MARK_TYPE_TRAPE_VFLN: case MARK_TPYE_TRAPE_VBLN://(*Left.Negative|左负横cc向误差再取反向*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel]= -pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel];
+							break;
+						default: //(*Line-Mark*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel]= 0;
+					}
+				}
+				//开始计算实际误差2023.4.26.094740
+				if(iErrorItemCountH>0)
+				{
+					pstStCalcParam_In->alrHerrRes_2[1]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++) //(*找横向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidH[iLevel]==1)
+						{
+							pstStCalcParam_In->alrHerrRes_2[1]= pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel];
+							break;
+						}
+					}
+					pstStCalcParam_In->alrHerrRes_2[1]= pstStCalcParam_In->alrHerrRes_2[1]*pstStCalcParam_In->i_rSysPrecision*100;
+
+					//(*算出横向误差*)
+					if (pstStCalcParam_In->i_iMarkTypId!=MARK_TYPE_LINE && pstStCalcParam_In->i_iMarkHLen!=0 && pstStCalcParam_In->i_iMarkVLen!=0)
+					{
+						pstStCalcParam_In->alrHerrRes_2[1]= pstStCalcParam_In->alrHerrRes_2[1]*pstStCalcParam_In->i_iMarkHLen/pstStCalcParam_In->i_iMarkVLen; //(*算出运动方向垂直的边差*)
+					}
+				}
+				else//横向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrHerrRes_2[1]= -32768;
+				}
+				iErrorItemCountH=0;
+
+				//任意色-纵向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[0][iLevel] &&// (*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel]) // (*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountV= iErrorItemCountV+1; //(*纵向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidV[iLevel]= 1; //(*当前阀值的纵向误差有效*)
+
+						//(*纵向误差由T1的位置-T2的位置*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrMidlinePos[0][iLevel];
+						lrTmpVal= lrTmpVal-pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[0][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorV_2[1][iLevel]= lrTmpVal;
+					}
+				}
+
+				//	(*han.dp@2017-05-30 16:41:26
+				//	.开始得到实际的误差
+				//	*)
+				if (iErrorItemCountV>0)
+				{
+					pstStCalcParam_In->alrVerrRes_2[1]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)  //(*找纵向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidV[iLevel]==1)
+						{
+							pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrThresLevelErrorV_2[1][iLevel];
+							break;
+						}
+					}
+					//			(*han.dp@2017-04-20 13:26:25
+					//			.此时lrVerrResult和lrHerrResult保存了将要用的误差
+					//			.单位换算成物理距离: 0.01mm
+					//			*)
+					pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrVerrRes_2[1]*pstStCalcParam_In->i_rSysPrecision*100;
+
+
+					pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrVerrRes_2[1]+pstStCalcParam_In->i_diGateAbsOffsetPhy; //(*Rev. han.dp@2017-04-05 19:48:47*)
+					if(pstStCalcParam_In->i_byColorId_Cur>1)
+					{
+						pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrVerrRes_2[1]-
+							(pstStCalcParam_In->i_byColorId_Cur-1)*pstStCalcParam_In->i_iStandardMarkSpacings;//2023.7.3.155308实际误差=计算的物理偏差-(当前色序-1}*20mm*).默认都是跟1色
+					}
+					else
+					{
+						pstStCalcParam_In->alrVerrRes_2[1]= -32768;//直接提示丢失2023.7.3.155111
+						pstStCalcParam_Out->o_iRtn_V= -4;//-4表示当前色序可能存在异常2023.7.3.155113
+					}
+				}
+				else//纵向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrVerrRes_2[1]= -32768;
+				}
+				iErrorItemCountV=0;
+				break;//(*Left.Positive*)
+			case MARK_ARRANGE_VREV://逆序
+				//前一色-横向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					//跟前一色、T1和T2用第一组
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel] && //(*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[1][iLevel] ) //(*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountH= iErrorItemCountH+1; //(*横向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidH[iLevel]= 1; //(*当前阀值的横向误差有效*)
+
+						//(*横向误差为T1的宽度-T2的宽度*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrWidthOfThresholdLevel[0][iLevel];
+						lrTmpVal= lrTmpVal - pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrWidthOfThresholdLevel[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= lrTmpVal;
+					}
+					switch (pstStCalcParam_In->i_iMarkTypId)
+					{
+						case MARK_TYPE_TRAPE_VFLP: case MARK_TYPE_TRAPE_VBLP:
+							break;//(*Left.Positive*)
+						case MARK_TYPE_TRAPE_VFLN: case MARK_TPYE_TRAPE_VBLN://(*Left.Negative|左负横向误差再取反向*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= -pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel];
+							break;
+						default: //(*Line-Mark*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= 0;
+					}
+				}
+				//开始计算实际误差2023.4.26.094740
+				if(iErrorItemCountH>0)
+				{
+					pstStCalcParam_In->alrHerrRes_2[0]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++) //(*找横向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidH[iLevel]==1)
+						{
+							pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel];
+							break;
+						}
+					}
+					pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrHerrRes_2[0]*pstStCalcParam_In->i_rSysPrecision*100;
+
+					//(*算出横向误差*)
+					if (pstStCalcParam_In->i_iMarkTypId!=MARK_TYPE_LINE && pstStCalcParam_In->i_iMarkHLen!=0 && pstStCalcParam_In->i_iMarkVLen!=0)
+					{
+						pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrHerrRes_2[0]*pstStCalcParam_In->i_iMarkHLen/pstStCalcParam_In->i_iMarkVLen; //(*算出运动方向垂直的边差*)
+					}
+				}
+				else//横向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrHerrRes_2[0]= -32768;
+				}
+				iErrorItemCountH=0;
+
+				//前一色-纵向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel] &&// (*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[1][iLevel]) // (*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountV= iErrorItemCountV+1; //(*纵向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidV[iLevel]= 1; //(*当前阀值的纵向误差有效*)
+
+						//(*纵向误差由T1的位置-T2的位置*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[0][iLevel];
+						lrTmpVal= lrTmpVal-pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel]= lrTmpVal;
+					}
+				}
+
+				//	(*han.dp@2017-05-30 16:41:26
+				//	.开始得到实际的误差
+				//	*)
+				if (iErrorItemCountV>0)
+				{
+					pstStCalcParam_In->alrVerrRes_2[0]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)  //(*找纵向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidV[iLevel]==1)
+						{
+							pstStCalcParam_In->alrVerrRes_2[0]= pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel];
+							break;
+						}
+					}
+					//			(*han.dp@2017-04-20 13:26:25
+					//			.此时lrVerrResult和lrHerrResult保存了将要用的误差
+					//			.单位换算成物理距离: 0.01mm
+					//			*)
+					pstStCalcParam_In->alrVerrRes_2[0]= pstStCalcParam_In->alrVerrRes_2[0]*pstStCalcParam_In->i_rSysPrecision*100;
+				}
+				else//横向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrVerrRes_2[0]= -32768;
+				}
+				iErrorItemCountV=0;
+
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					//跟任意色、T1第一组和T2用第二组
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[1][iLevel] && //(*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[1][iLevel] ) //(*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountH= iErrorItemCountH+1; //(*横向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidH[iLevel]= 1; //(*当前阀值的横向误差有效*)
+
+						//(*横向误差为T1的宽度-T2的宽度*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrWidthOfThresholdLevel[1][iLevel];
+						lrTmpVal= lrTmpVal - pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrWidthOfThresholdLevel[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel]= lrTmpVal;
+					}
+
+					switch (pstStCalcParam_In->i_iMarkTypId)
+					{
+						case MARK_TYPE_TRAPE_VFLP: case MARK_TYPE_TRAPE_VBLP:
+							break;//(*Left.Positive*)
+						case MARK_TYPE_TRAPE_VFLN: case MARK_TPYE_TRAPE_VBLN://(*Left.Negative|左负横向误差再取反向*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel]= -pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel];
+							break;
+						default: //(*Line-Mark*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel]= 0;
+					}
+				}
+				//开始计算实际误差2023.4.26.094740
+				if(iErrorItemCountH>0)
+				{
+					pstStCalcParam_In->alrHerrRes_2[1]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++) //(*找横向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidH[iLevel]==1)
+						{
+							pstStCalcParam_In->alrHerrRes_2[1]= pstStCalcParam_In->alrThresLevelErrorH_2[1][iLevel];
+							break;
+						}
+					}
+					pstStCalcParam_In->alrHerrRes_2[1]= pstStCalcParam_In->alrHerrRes_2[1]*pstStCalcParam_In->i_rSysPrecision*100;
+
+					//(*算出横向误差*)
+					if (pstStCalcParam_In->i_iMarkTypId!=MARK_TYPE_LINE && pstStCalcParam_In->i_iMarkHLen!=0 && pstStCalcParam_In->i_iMarkVLen!=0)
+					{
+						pstStCalcParam_In->alrHerrRes_2[1]= pstStCalcParam_In->alrHerrRes_2[1]*pstStCalcParam_In->i_iMarkHLen/pstStCalcParam_In->i_iMarkVLen; //(*算出运动方向垂直的边差*)
+					}
+				}
+				else//横向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrHerrRes_2[1]= -32768;
+				}
+				iErrorItemCountH=0;
+
+				//任意色-纵向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[1].axThresholdLevelValidFlag[1][iLevel] &&// (*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[1][iLevel]) // (*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountV= iErrorItemCountV+1; //(*纵向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidV[iLevel]= 1; //(*当前阀值的纵向误差有效*)
+
+						//(*纵向误差由T1的位置-T2的位置*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[1].alrMidlinePos[1][iLevel];
+						lrTmpVal= lrTmpVal-pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorV_2[1][iLevel]= lrTmpVal;
+					}
+				}
+
+				//	(*han.dp@2017-05-30 16:41:26
+				//	.开始得到实际的误差
+				//	*)
+				if (iErrorItemCountV>0)
+				{
+					pstStCalcParam_In->alrVerrRes_2[1]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)  //(*找纵向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidV[iLevel]==1)
+						{
+							pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrThresLevelErrorV_2[1][iLevel];
+							break;
+						}
+					}
+					//			(*han.dp@2017-04-20 13:26:25
+					//			.此时lrVerrResult和lrHerrResult保存了将要用的误差
+					//			.单位换算成物理距离: 0.01mm
+					//			*)
+					pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrVerrRes_2[1]*pstStCalcParam_In->i_rSysPrecision*100;
+
+					pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrVerrRes_2[1]+pstStCalcParam_In->i_diGateAbsOffsetPhy; //(*Rev. han.dp@2017-04-05 19:48:47*)
+					if(pstStCalcParam_In->i_byColorId_Cur>1)
+					{
+						pstStCalcParam_In->alrVerrRes_2[1]= pstStCalcParam_In->alrVerrRes_2[1]-
+							(pstStCalcParam_In->i_byColorId_Cur-1)*pstStCalcParam_In->i_iStandardMarkSpacings;//2023.7.3.155308实际误差=计算的物理偏差-(当前色序-1}*20mm*).默认都是跟1色
+
+					}
+					else
+					{
+						pstStCalcParam_In->alrVerrRes_2[1]= -32768;//直接提示丢失2023.7.3.155111
+						pstStCalcParam_Out->o_iRtn_V= -4;//-4表示当前色序可能存在异常2023.7.3.155113
+					}
+				}
+				else//纵向丢失2023.4.26.151613||以下处理丢失-平均是否要单独处理？？
+				{
+					pstStCalcParam_In->alrVerrRes_2[1]= -32768;
+				}
+				iErrorItemCountV=0;
+				break;
+			default: //(*横排只能跟前一色*)
+			;
+		}
+	}
+	else//单波门只计算一组-只用当前波门位置-可计算横排和单标记
+	{
+		switch (pstStCalcParam_In->i_iMarkArrangeId)
+		{
+			case MARK_ARRANGE_VFOR: case MARK_ARRANGE_HFOR:
+			case MARK_ARRANGE_VREV: case MARK_ARRANGE_HREV://不分顺逆序2023.4.26.141357				//
+				//前一色-横向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					//跟前一色、T1和T2用第二组
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel] && //(*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[1][iLevel] ) //(*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountH= iErrorItemCountH+1; //(*横向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidH[iLevel]= 1; //(*当前阀值的横向误差有效*)
+
+						//(*横向误差为T1的宽度-T2的宽度*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrWidthOfThresholdLevel[0][iLevel];
+						lrTmpVal= lrTmpVal - pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrWidthOfThresholdLevel[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= lrTmpVal;
+					}
+
+					switch (pstStCalcParam_In->i_iMarkTypId)
+					{
+						case MARK_TYPE_TRAPE_VFLP: case MARK_TYPE_TRAPE_VBLP:
+							break;//(*Left.Positive*)
+						case MARK_TYPE_TRAPE_VFLN: case MARK_TPYE_TRAPE_VBLN://(*Left.Negative|左负横向误差再取反向*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= -pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel];
+							break;
+						default: //(*Line-Mark*)
+							pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel]= 0;
+					}
+				}
+				//开始计算实际误差2023.4.26.094740
+				if(iErrorItemCountH>0)
+				{
+					pstStCalcParam_In->alrHerrRes_2[0]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++) //(*找横向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidH[iLevel]==1)
+						{
+							pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrThresLevelErrorH_2[0][iLevel];
+							break;
+						}
+					}
+					pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrHerrRes_2[0]*pstStCalcParam_In->i_rSysPrecision*100;
+
+					//(*算出横向误差*)
+					if (pstStCalcParam_In->i_iMarkTypId!=MARK_TYPE_LINE && pstStCalcParam_In->i_iMarkHLen!=0 && pstStCalcParam_In->i_iMarkVLen!=0)
+					{
+						pstStCalcParam_In->alrHerrRes_2[0]= pstStCalcParam_In->alrHerrRes_2[0]*pstStCalcParam_In->i_iMarkHLen/pstStCalcParam_In->i_iMarkVLen; //(*算出运动方向垂直的边差*)
+					}
+				}
+				else//横向丢失-2023.4.26.160041
+				{
+					pstStCalcParam_In->alrHerrRes_2[0]= -32768;
+				}
+				//前一色-纵向
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					if (pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel] &&// (*T1所用组的T1信号 阀值有效*)
+						pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[1][iLevel]) // (*T2所用组的T2信号 阀值有效*)
+					{
+						iErrorItemCountV= iErrorItemCountV+1; //(*纵向误差计数*)
+						pstStCalcParam_In->axThresLevelErrorValidV[iLevel]= 1; //(*当前阀值的纵向误差有效*)
+
+						//(*纵向误差由T1的位置-T2的位置*)
+						lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[0][iLevel];
+						lrTmpVal= lrTmpVal-pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[1][iLevel];
+						pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel]= lrTmpVal;
+					}
+				}
+				//	(*han.dp@2017-05-30 16:41:26
+				//	.开始得到实际的误差
+				//	*)
+				if (iErrorItemCountV>0)
+				{
+					pstStCalcParam_In->alrVerrRes_2[0]= 0;
+					for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)  //(*找纵向误差*)
+					{
+						if (pstStCalcParam_In->axThresLevelErrorValidV[iLevel]==1)
+						{
+							pstStCalcParam_In->alrVerrRes_2[0]= pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel];
+							break;
+						}
+					}
+					//			(*han.dp@2017-04-20 13:26:25
+					//			.此时lrVerrResult和lrHerrResult保存了将要用的误差
+					//			.单位换算成物理距离: 0.01mm
+					//			*)
+					pstStCalcParam_In->alrVerrRes_2[0]= pstStCalcParam_In->alrVerrRes_2[0]*pstStCalcParam_In->i_rSysPrecision*100;
+				}
+				else//纵向丢失-2023.4.26.160041
+				{
+					pstStCalcParam_In->alrVerrRes_2[0]= -32768;
+				}
+				//跟任意色单波门模式下直接赋值-32768
+				pstStCalcParam_In->alrHerrRes_2[1]= -32768;
+				pstStCalcParam_In->alrVerrRes_2[1]= -32768;
+			break;
+			case MARK_ARRANGE_OMK://单标记只计算纵向-无横向误差
+				//						alrHerrRes_2[0]= alrThresLevelErrorH_2[0][iLevel];
+				if (pstStCalcParam_In->i_xOMK0_PosConfirmed==1)
+				{
+					//2025.5.20.134936   取消误差确认的单次限制@必须切换波门才能再次确认。
+					//每次点击确认后重新记录修正值
+					pstStCalcParam_In->xFlag_OMK0_PosConfirmed = 0;//每次按下误差确认后复位标志@2025.5.20.135234+
+
+					if(pstStCalcParam_In->xFlag_OMK0_PosConfirmed != 1)
+					{
+						for(iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+						{
+							if (pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel])
+							{
+								pstStCalcParam_Out->io_rOMK0_PosConfirmed=
+									pstStCalcParam_In->i_iGateSa*pstStCalcParam_In->i_lrGirth/pstStCalcParam_In->i_iRSamplePointsNum+
+									pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[0][iLevel]*
+									pstStCalcParam_In->i_iGateWidthPhy/pstStCalcParam_In->i_iEachGatePointsNr;
+								pstStCalcParam_In->xFlag_OMK0_PosConfirmed = 1;
+								break;
+							}
+						}
+					}
+				}
+				for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+				{
+					if(pstStCalcParam_In->xFlag_OMK0_PosConfirmed)
+					{
+						if (pstStCalcParam_Out->astStSignalParsingGroupDetail[0].axThresholdLevelValidFlag[0][iLevel])
+						{
+							iErrorItemCountV= iErrorItemCountV+1; //(*纵向误差计数*)
+							pstStCalcParam_In->axThresLevelErrorValidV[iLevel]= 1; //(*当前阀值的纵向误差有效*)
+							lrTmpVal= pstStCalcParam_Out->astStSignalParsingGroupDetail[0].alrMidlinePos[0][iLevel];
+							pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel]= lrTmpVal;
+						}
+					}
+				}
+				if (iErrorItemCountV>0)
+				{
+					//(*优先用50%的位置*)
+					if(pstStCalcParam_In->xFlag_OMK0_PosConfirmed)
+					{
+						pstStCalcParam_In->alrVerrRes_2[0]= 0;
+						for (iLevel=0; iLevel<pstStCalcParam_In->i_iThresNum; iLevel++)
+						{	//(*找纵向误差*)
+							if (pstStCalcParam_In->axThresLevelErrorValidV[iLevel]==1)
+							{
+								pstStCalcParam_In->alrVerrRes_2[0]= pstStCalcParam_In->alrThresLevelErrorV_2[0][iLevel];
+								break;
+							}
+						}
+						pstStCalcParam_In->alrVerrRes_2[0]= (pstStCalcParam_Out->io_rOMK0_PosConfirmed-
+							(pstStCalcParam_In->i_iGateSa*pstStCalcParam_In->i_lrGirth/
+							pstStCalcParam_In->i_iRSamplePointsNum+pstStCalcParam_In->alrVerrRes_2[0]*
+							pstStCalcParam_In->i_iGateWidthPhy/pstStCalcParam_In->i_iEachGatePointsNr))*100;
+					}
+				}
+				else//纵向丢失-2023.4.26.160041
+				{
+					pstStCalcParam_In->alrVerrRes_2[0]= -32768;
+				}
+				//单标记无横向误差，无跟任意色误差
+				pstStCalcParam_In->alrHerrRes_2[0]= -32768;
+				pstStCalcParam_In->alrHerrRes_2[1]= -32768;
+				pstStCalcParam_In->alrVerrRes_2[1]= -32768;
+			break;
+			default: //(*横排只能跟前一色*)
+			;
+		}
+	}
+
+	//误差平均之前注意赋值使用的误差-根据双波门开关以及纵横向跟任意色开关
+	if(pstStCalcParam_In->i_xFlag_Gate_double)		//双波门打开2023.4.26.133659
+	{
+		if(pstStCalcParam_In->i_xFlag_Follow_Other_V)//纵向跟任意色
+		{
+			lrVerrResult= pstStCalcParam_In->alrVerrRes_2[1];
+		}
+		else
+		{
+			lrVerrResult= pstStCalcParam_In->alrVerrRes_2[0];
+		}
+
+		if(pstStCalcParam_In->i_xFlag_Follow_Other_H)//横向跟任意色
+		{
+			lrHerrResult= pstStCalcParam_In->alrHerrRes_2[1];
+		}
+		else
+		{
+			lrHerrResult= pstStCalcParam_In->alrHerrRes_2[0];
+		}
+	}
+	else
+	{
+		lrVerrResult= pstStCalcParam_In->alrVerrRes_2[0];
+		lrHerrResult= pstStCalcParam_In->alrHerrRes_2[0];
+	}
+	//误差平均2023.4.26.151159
+	if(lrVerrResult != -32768)//非丢失-纵向平均
+	{
+#if KS_USE_NEW_FLY_REMOVE
+		//新飞点剔除:在N幅平均之前对原始逐帧误差剔除,飞点用替换值替换——
+		//成熟账本(≥3点)且非振荡时为趋势外推P并同步刷锁存,否则为锁存值|
+		//必须先剔除再平均,否则飞点被N幅平均稀释后可能低于门限被当成正常点
+		//判定码写入o_byFlyFlag_V供KS_FB_ProSample置byStsV bit2|Yang.zj+用于新飞点检测 2026.10.24.103254|Yang.zj+ 2026.10.27.140301
+		lrVerrResult= KS_FlyRemove_Feed_V(lrVerrResult,&pstStCalcParam_Out->o_byFlyFlag_V);
+#endif
+		if (pstStCalcParam_In->iBufferedIndexWr>=20)
+		{
+			pstStCalcParam_In->iBufferedIndexWr= pstStCalcParam_In->iBufferedIndexWr-20;
+		}
+		pstStCalcParam_In->alrErrorBufferedV[pstStCalcParam_In->iBufferedIndexWr]= lrVerrResult; //(*纵向误差存起来*)
+		pstStCalcParam_In->iBufferedIndexWr= pstStCalcParam_In->iBufferedIndexWr+1;
+
+		if (pstStCalcParam_In->iPushedErrItemsAtLeast<pstStCalcParam_In->i_byAverage_v)
+		{
+			pstStCalcParam_In->iPushedErrItemsAtLeast= pstStCalcParam_In->iPushedErrItemsAtLeast+1; //(*只记录到基础边界*)
+		}
+		else
+		{
+			//(*纵向误差平均处理*)
+			if (pstStCalcParam_In->i_byAverage_v>1)
+			{
+				pstStCalcParam_In->iBufferedIndexRd= pstStCalcParam_In->iBufferedIndexWr;
+				lrSumTotal= 0;
+				for (iIndex=0; iIndex<pstStCalcParam_In->i_byAverage_v; iIndex++)
+				{
+					pstStCalcParam_In->iBufferedIndexRd= pstStCalcParam_In->iBufferedIndexRd-1;
+					lrSumTotal= lrSumTotal+pstStCalcParam_In->alrErrorBufferedV[pstStCalcParam_In->iBufferedIndexRd];
+					if (pstStCalcParam_In->iBufferedIndexRd<=0)
+					{
+						pstStCalcParam_In->iBufferedIndexRd= pstStCalcParam_In->iBufferedIndexRd+20;
+					}
+				}
+				lrVerrResult= lrSumTotal/pstStCalcParam_In->i_byAverage_v;
+			}
+		}
+		pstStCalcParam_In->iCountForSignalLost= 0;
+		pstStCalcParam_Out->o_iVResult= (INT)(lrVerrResult-pstStCalcParam_In->i_iAdjustV);
+		pstStCalcParam_Out->o_iRtn_V= 0;
+	}
+	else
+	{
+		pstStCalcParam_In->iCountForSignalLost= pstStCalcParam_In->iCountForSignalLost+1;
+		if (pstStCalcParam_In->iCountForSignalLost>3) //(*连续丢失3幅就重新开始计平均*)
+		{
+			pstStCalcParam_In->iBufferedIndexWr= 0;
+			pstStCalcParam_In->iPushedErrItemsAtLeast= 0;
+		}
+		pstStCalcParam_Out->o_iRtn_V= -3;
+#if KS_USE_NEW_FLY_REMOVE
+		pstStCalcParam_Out->o_byFlyFlag_V= KS_FLY_JUDGE_GOOD;//丢失帧不算飞点|Yang.zj+用于新飞点检测 2026.10.24.103254
+		KS_FlyRemove_Invalid_V();//丢失打断三点趋势确认候选链(不能跨越丢失确认趋势);连续丢失≥4拍内部自动全复位|Yang.zj+ 2026.10.29.161307|Yang.zj+ 2026.11.09.160000
+#endif
+	}
+	//(*将当前误差缓存到历史误差中|index的初始值为0很重要*)
+	//2020.6.13.140431||数组超限，>20更改为>=20
+	if(lrHerrResult != -32768)//非丢失
+	{
+#if KS_USE_NEW_FLY_REMOVE
+		//新飞点剔除:横向,同样在N幅平均之前(理由同纵向)|Yang.zj+用于新飞点检测 2026.10.24.103254
+		lrHerrResult= KS_FlyRemove_Feed_H(lrHerrResult,&pstStCalcParam_Out->o_byFlyFlag_H);
+#endif
+		if (pstStCalcParam_In->iBufferedIndexWr_H>=20)
+		{
+			pstStCalcParam_In->iBufferedIndexWr_H= pstStCalcParam_In->iBufferedIndexWr_H-20;
+		}
+		pstStCalcParam_In->alrErrorBufferedH[pstStCalcParam_In->iBufferedIndexWr_H]= lrHerrResult; //(*横向误差存起来*)
+		pstStCalcParam_In->iBufferedIndexWr_H= pstStCalcParam_In->iBufferedIndexWr_H+1;
+
+		if (pstStCalcParam_In->iPushedErrItemsAtLeast_H<pstStCalcParam_In->i_byAverage_h )
+		{
+			pstStCalcParam_In->iPushedErrItemsAtLeast_H= pstStCalcParam_In->iPushedErrItemsAtLeast_H+1; //(*只记录到基础边界*)
+		}
+		else
+		{
+			//(*横向误差平均处理*)
+			if (pstStCalcParam_In->i_byAverage_h>1)
+			{
+				pstStCalcParam_In->iBufferedIndexRd_H= pstStCalcParam_In->iBufferedIndexWr_H;
+				lrSumTotal= 0;
+				for (iIndex=0; iIndex<pstStCalcParam_In->i_byAverage_h; iIndex++)
+				{
+					pstStCalcParam_In->iBufferedIndexRd_H= pstStCalcParam_In->iBufferedIndexRd_H-1;
+					lrSumTotal= lrSumTotal+pstStCalcParam_In->alrErrorBufferedH[pstStCalcParam_In->iBufferedIndexRd_H];
+					//2020.6.13.154148||niu,j|索引超限
+					if (pstStCalcParam_In->iBufferedIndexRd_H<=0)
+					{
+						pstStCalcParam_In->iBufferedIndexRd_H= pstStCalcParam_In->iBufferedIndexRd_H+20;
+					}
+				}
+				lrHerrResult= lrSumTotal/pstStCalcParam_In->i_byAverage_h;
+			}
+		}
+		pstStCalcParam_In->iCountForSignalLost_H= 0;
+ 		pstStCalcParam_Out->o_iHResult= (INT)(lrHerrResult-pstStCalcParam_In->i_iAdjustH);
+		pstStCalcParam_Out->o_iRtn_H= 0;
+	}
+	else
+	{
+		pstStCalcParam_In->iCountForSignalLost_H= pstStCalcParam_In->iCountForSignalLost_H+1;
+		if (pstStCalcParam_In->iCountForSignalLost_H>3) //(*连续丢失3幅就重新开始计平均*)
+		{
+			pstStCalcParam_In->iBufferedIndexWr_H= 0;
+			pstStCalcParam_In->iPushedErrItemsAtLeast_H= 0;
+		}
+		pstStCalcParam_Out->o_iRtn_H= -3;
+#if KS_USE_NEW_FLY_REMOVE
+		pstStCalcParam_Out->o_byFlyFlag_H= KS_FLY_JUDGE_GOOD;//丢失帧不算飞点|Yang.zj+用于新飞点检测 2026.10.24.103254
+		KS_FlyRemove_Invalid_H();//丢失打断三点趋势确认候选链|Yang.zj+ 2026.10.29.161307|Yang.zj+ 2026.11.09.160000
+#endif
+	}
+	pstStCalcParam_Out->aiVerror_Gate[0]= (INT)pstStCalcParam_In->alrVerrRes_2[0];
+	pstStCalcParam_Out->aiVerror_Gate[1]= (INT)pstStCalcParam_In->alrVerrRes_2[1];
+	pstStCalcParam_Out->aiHerror_Gate[0]= (INT)pstStCalcParam_In->alrHerrRes_2[0];
+	pstStCalcParam_Out->aiHerror_Gate[1]= (INT)pstStCalcParam_In->alrHerrRes_2[1];
+
+	return 1;
+}
+
+short KS_CalcError_ARC_Version(char **msg)
+{
+	*msg = "KS_CalcError_ARC_Version: 2023.5.24.090742";
+	return 0;
+}
+
+void KS_FB_PickOutFakePoint_V(StPickOutFakePointIn stStPickOutFakePointIn,BYTE *o_pxFakeIsConfirmed)
+{
+	INT iN;
+	INT iUsedVariationMaxThreshold;
+	static INT aiBufferedError[3];		// (*buffered error list*)
+	static INT aiVariation[2];  //(*variation*)
+	INT iVariationVariation; //(*variation's variation*)
+	if(stStPickOutFakePointIn.i_xIsValidError==0)
+	{
+		if (o_pxFakeIsConfirmed!=0)
+		{
+			*o_pxFakeIsConfirmed= 1;
+		}
+		aiBufferedError[0]= 0;
+		aiBufferedError[1]= 0;
+		aiBufferedError[2]= 0;
+	}
+	//(*valid error process*)
+	else
+	//(*误差变化量的变化量不超出10|2016.10.14.120106_*)
+	{
+		if(abs(stStPickOutFakePointIn.i_iError_0_01mm)<=stStPickOutFakePointIn.i_iBoundaryError_0_01mm)
+		//(*0.5mm内的误差变化量的变化量不超过5不认为是飞点*)
+		{
+			iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationBaseValue;
+		}
+		else
+		{
+			iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationBaseValue+
+				(abs(stStPickOutFakePointIn.i_iError_0_01mm)-stStPickOutFakePointIn.i_iBoundaryError_0_01mm)/stStPickOutFakePointIn.i_iErrorLevel_0_01mm;
+				//(*超过0.5mm的误差,每0.25mm一个档位递增变化量的变化量*)
+			if(iUsedVariationMaxThreshold>stStPickOutFakePointIn.i_iVariationVariationMax)//(*upper limit*)
+			{
+				iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationVariationMax;
+			}
+			else if(iUsedVariationMaxThreshold<stStPickOutFakePointIn.i_iVariationVariationMin)//2024.8.24
+			{
+				iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationVariationMin;//(*lower limit*)
+			}
+		}
+	}
+
+	//	(*存放规则:都是用下标1来记录当前误差|2017.3.31.145925_*)
+	//	(*rolling the buffered error list*)
+	for(iN=2;iN>0;iN--)
+	{
+		aiBufferedError[iN]= aiBufferedError[iN-1];
+	}
+	aiBufferedError[0]= stStPickOutFakePointIn.i_iError_0_01mm; //(*record the current error to buffered error list*)
+	//(*calculate error variation*)
+	for(iN=2;iN>0;iN--)
+	{
+		aiVariation[iN-1]= aiBufferedError[iN-1]-aiBufferedError[iN]; //(*new - old*)
+	}
+	//(*calculate error variation variation*)
+	iVariationVariation= aiVariation[0] - aiVariation[1];
+	if(o_pxFakeIsConfirmed!=0)
+	{
+		if (abs(iVariationVariation)>abs(iUsedVariationMaxThreshold))
+		{
+			*o_pxFakeIsConfirmed= 1;
+		}
+		else
+		{
+			*o_pxFakeIsConfirmed= 0;
+		}
+	}
+}
+
+//增加横向飞点判断2023.5.24.103307
+void KS_FB_PickOutFakePoint_H(StPickOutFakePointIn stStPickOutFakePointIn,BYTE *o_pxFakeIsConfirmed)
+{
+	INT iN;
+	INT iUsedVariationMaxThreshold;
+	static INT aiBufferedError[3];		// (*buffered error list*)
+	static INT aiVariation[2];  //(*variation*)
+	INT iVariationVariation; //(*variation's variation*)
+	if(stStPickOutFakePointIn.i_xIsValidError==0)
+	{
+		if (o_pxFakeIsConfirmed!=0)
+		{
+			*o_pxFakeIsConfirmed= 1;
+		}
+		aiBufferedError[0]= 0;
+		aiBufferedError[1]= 0;
+		aiBufferedError[2]= 0;
+	}
+	//(*valid error process*)
+	else
+	//(*误差变化量的变化量不超出10|2016.10.14.120106_*)
+	{
+		if(abs(stStPickOutFakePointIn.i_iError_0_01mm)<=stStPickOutFakePointIn.i_iBoundaryError_0_01mm)
+		//(*0.5mm内的误差变化量的变化量不超过5不认为是飞点*)
+		{
+			iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationBaseValue;
+		}
+		else
+		{
+			iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationBaseValue+
+				(abs(stStPickOutFakePointIn.i_iError_0_01mm)-stStPickOutFakePointIn.i_iBoundaryError_0_01mm)/stStPickOutFakePointIn.i_iErrorLevel_0_01mm;
+			//(*超过0.5mm的误差,每0.25mm一个档位递增变化量的变化量*)
+			if(iUsedVariationMaxThreshold>stStPickOutFakePointIn.i_iVariationVariationMax)//(*upper limit*)
+			{
+				iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationVariationMax;
+			}
+			else if(iUsedVariationMaxThreshold<stStPickOutFakePointIn.i_iVariationVariationMin)
+			{
+				iUsedVariationMaxThreshold= stStPickOutFakePointIn.i_iVariationVariationMin;//(*lower limit*)
+			}
+		}
+	}
+
+	//	(*存放规则:都是用下标1来记录当前误差|2017.3.31.145925_*)
+	//	(*rolling the buffered error list*)
+	for(iN=2;iN>0;iN--)
+	{
+		aiBufferedError[iN]= aiBufferedError[iN-1];
+	}
+	aiBufferedError[0]= stStPickOutFakePointIn.i_iError_0_01mm; //(*record the current error to buffered error list*)
+	//(*calculate error variation*)
+	for(iN=2;iN>0;iN--)
+	{
+		aiVariation[iN-1]= aiBufferedError[iN-1]-aiBufferedError[iN]; //(*new - old*)
+	}
+	//(*calculate error variation variation*)
+	iVariationVariation= aiVariation[0] - aiVariation[1];
+	if(o_pxFakeIsConfirmed!=0)
+	{
+		if (abs(iVariationVariation)>abs(iUsedVariationMaxThreshold))
+		{
+			*o_pxFakeIsConfirmed= 1;
+		}
+		else
+		{
+			*o_pxFakeIsConfirmed= 0;
+		}
+	}
+}
+
+//2026.4.22.112641 屏蔽
+//////////////////////////////////////////////////
+// 2022.4.13.104715/hdp
+// 获取信号的前后沿以及宽度
+// Functions: KS_GetSignalDetails()
+// Parameters:
+//
+// Returns:
+//	0函数执行无错误/-1参数传入错误/-2基线不对/-3有个边沿找不到/-4信号有效幅度过小
+//////////////////////////////////////////////////
+//INT KS_GetSignalDetails(
+//	BYTE *i_byData,
+//	INT i_iBytesNum,
+//	REAL i_rBaseline,
+//	INT i_iMarkTypId,// 标记形式/三角标纵向误差看直边
+//	REAL *o_rVpos,// 纵向用于计算误差的位置
+//	REAL *o_rHwid)// 横向色标宽度
+//{
+//	if( i_byData!=NULL &&
+//		(i_iBytesNum>0 && i_iBytesNum<1200) &&
+//		o_rVpos!=NULL &&
+//		o_rHwid!=NULL ) ;
+//	else
+//	{
+//		return -1;
+//	}
+//
+//	INT t;
+//	BYTE byMin;
+//	BYTE byMax;
+//	INT iMinPos;
+//	INT iMaxPos;
+//	BYTE *pBytes_tmp;
+//
+//	// 找极值和极值出现的位置
+//	pBytes_tmp = i_byData;
+//	byMin = byMax = *pBytes_tmp;
+//	iMinPos = iMaxPos = 0;
+//	for(t=0; t<i_iBytesNum; ++t)
+//	{
+//		if( byMin>(*pBytes_tmp) )
+//		{
+//			byMin = *pBytes_tmp;
+//			iMinPos = t;
+//		}
+//		if( byMax<(*pBytes_tmp) )
+//		{
+//			byMax = *pBytes_tmp;
+//			iMaxPos = t;
+//		}
+//		pBytes_tmp++;
+//	}
+//
+//	INT iSeekFrom;
+//	REAL rMin;
+//	REAL rMax;
+//	REAL rThreshold50;
+//
+//	rMin = (REAL)byMin;
+//	rMax = (REAL)byMax;
+//
+//	// 按极值和基线差别最大的来定位信号
+//	//	if( i_rBaseline>rMin &&//2022.5.23.103703注释
+//	//		i_rBaseline<rMax );
+//	//	else {
+//	//		return -2;
+//	//	}
+//
+//	// 50%的位置就用来计算误差了
+//	//	if( (i_rBaseline-rMin) > (rMax-i_rBaseline) ) {// 原始信号反/显示信号为正极性的那种
+//	if( ABS_SUB(i_rBaseline,rMin)>=ABS_SUB(i_rBaseline,rMax) )
+//	{// 信号有效幅度的高度用绝对值来比较/2022.5.23.104054/+
+//		rThreshold50 = (i_rBaseline+rMin)/2;
+//		iSeekFrom = iMinPos;
+//	}
+//	else
+//	{
+//		rThreshold50 = (rMax+i_rBaseline)/2;
+//		iSeekFrom = iMaxPos;
+//	}
+//	// 对信号幅度进行一个简单的筛选/2022.5.23.105756
+//	pBytes_tmp = i_byData;
+//	if( ABS_SUB(*(pBytes_tmp+iSeekFrom), i_rBaseline)<8 )
+//	{// 18v~256取4;7.4v~256取8;2022.5.23.110229
+//		return -4;
+//	}
+//
+//	REAL rXdelta;
+//	pBytes_tmp = i_byData;
+//	INT xFoundEdgeL = 0;
+//	INT xFoundEdgeR = 0;
+//	REAL rEdgeL,rEdgeR;
+//
+//	// 向左找前沿/不论上升还是下降/找到1个就算
+//	for(t=iSeekFrom; t>0; --t)
+//	{
+//		if( (*(pBytes_tmp+t)>rThreshold50 && *(pBytes_tmp+t-1)<=rThreshold50) ||
+//			(*(pBytes_tmp+t)<rThreshold50 && *(pBytes_tmp+t-1)>=rThreshold50) ) //
+//		{
+//			rXdelta = KS_RatioL_ByThresholdCutting(rThreshold50, (REAL)(*(pBytes_tmp+t-1)), (REAL)(*(pBytes_tmp+t)));
+//			xFoundEdgeL = 1;
+//			rEdgeL = t-1+rXdelta;
+//			break;
+//		}
+//	}
+//	// 向右找后沿
+//	for(t=iSeekFrom; t<i_iBytesNum-1; ++t)
+//	{
+//		if( (*(pBytes_tmp+t)>rThreshold50 && *(pBytes_tmp+t+1)<=rThreshold50) ||
+//			(*(pBytes_tmp+t)<rThreshold50 && *(pBytes_tmp+t+1)>=rThreshold50) ) //
+//		{
+//			rXdelta = KS_RatioL_ByThresholdCutting(rThreshold50, (REAL)(*(pBytes_tmp+t)), (REAL)(*(pBytes_tmp+t+1)));
+//			xFoundEdgeR = 1;
+//			rEdgeR = t+rXdelta;
+//			break;
+//		}
+//	}
+//
+//	if( xFoundEdgeL && xFoundEdgeR )
+//	{
+//		// 纵向位置
+//		if( i_iMarkTypId==MARK_TYPE_TRAPE_VFLP || i_iMarkTypId==MARK_TYPE_TRAPE_VFLN )
+//		{// 直边在前
+//			*o_rVpos = rEdgeL;
+//		}
+//		else if(i_iMarkTypId==MARK_TYPE_TRAPE_VBLP || i_iMarkTypId==MARK_TPYE_TRAPE_VBLN )
+//		{// 直边在后
+//			*o_rVpos = rEdgeR;
+//		}
+//		else
+//		{// 条标和等腰三角标都是看中心
+//			*o_rVpos = (rEdgeL+rEdgeR)/2;
+//		}
+//		// 横向宽度
+//		if( i_iMarkTypId==MARK_TYPE_LINE )
+//		{
+//			*o_rHwid = 0;
+//		}
+//		else
+//		{
+//			*o_rHwid = rEdgeR-rEdgeL;
+//		}
+//	}
+//	else
+//	{
+//		return -3;
+//	}
+//	return 0;
+//}
+//2026.4.21.153344 屏蔽函数
+//unsigned char  KS_CalcErr_ARC_New(
+//		unsigned short* i_puiFSampleDataSa1,//精采样数据起始
+//		unsigned short* i_puiFSampleDataSa2,
+//		//StAxisParam* i_pstStAxisParam,
+//		//StGrpParam* i_pstStGrpParam,
+//		float i_arBase[2],
+//		StCalcParam_Use_New* i_pstStCalcParam_Use_New)
+//{
+//	//2024.8.21.080456全新的计算误差了---------------------------------------niuj
+//	//获取输入需要的标志参数
+//	//先计算一下实际精采样波门对应点数
+//	short iEachGatePointsNr_Unit;//波门精采样点数
+//	unsigned long dwStart1;
+//	unsigned long dwStart2;
+//	unsigned long adwAdrStart_T1[16];//存放数据起始
+//	unsigned long adwAdrStart_T2[16];//存放数据起始
+//	short iColorId_Tmp;
+//	short iM;
+//	unsigned long dwN_Tmp;
+//	float arWidthOfThresholdLevel_T1[16][3];//存放每个色组的色标宽度
+//	float arWidthOfThresholdLevel_T2[16][3];
+//	float arMidlinePos_T1[16][3];//存放每个色标的纵向计数位置
+//	float arMidlinePos_T2[16][3];
+//	unsigned char axThresholdLevelValidFlag_T1[16][3];//阀值有效标志
+//	unsigned char axThresholdLevelValidFlag_T2[16][3];
+//	float arWidthOfThresholdLevel_Tmp[3];//临时变量
+//	float arMidlinePos_Tmp[3];
+//	unsigned char axThresholdLevelValidFlag_Tmp[3];
+//	short iK;
+//	short iColorId;
+//	unsigned char byErrorItemCountV;
+//	unsigned char byErrorItemCountH;
+//	unsigned char axThresLevelErrorValidV[3];
+//	unsigned char axThresLevelErrorValidH[3];
+//
+//	float arThresLevelErrorV[3];
+//	float arThresLevelErrorH[3];
+//	float rTempVal_Calc;
+//	float rResult_ErrV_Followpre;//计算跟前色误差
+//	short iResult_ErrV_Followpre;
+//	float rResult_ErrV_Follow_1U;//计算跟1色直接方式误差-
+//	short iResult_ErrV_Follow_1U;
+//	float rResult_ErrV_Follow_1U_New;//计算间接跟1色误差
+//	short iResult_ErrV_Follow_1U_New;
+//	float rResult_ErrH_Followpre;//计算跟前色误差
+//	short iResult_ErrH_Followpre;
+//	float rResult_ErrH_Follow_1U;//计算跟1色直接方式误差-
+//	short iResult_ErrH_Follow_1U;
+//	float rResult_ErrH_Follow_1U_New;//计算间接跟1色误差
+//	short iResult_ErrH_Follow_1U_New;
+//	//增加一些计算用的变量
+//	float rTmp;
+//	float rTmp1;
+//	unsigned char xFlag_Vaild_V;
+//	unsigned char xFlag_Vaild_H;
+//	short iLevel_Use;
+//
+//	float rVerrResult_Ave;
+//	float rHerrResult_Ave;
+//	float rSumTotal;
+//	short iIndex;
+//
+//	if(i_pstStCalcParam_Use_New->i_rInversedPrecision<(float)0.01)
+//	{
+//		i_pstStCalcParam_Use_New->i_rInversedPrecision= 0.05;
+//	}
+//	iEachGatePointsNr_Unit= (short)((float)(20)/   //20MM对应的距离
+//					i_pstStCalcParam_Use_New->i_rInversedPrecision);
+//
+//	//然后处理一下每个波形的波门起始
+//	dwStart1= (unsigned long)i_puiFSampleDataSa1;
+//	dwStart2= (unsigned long)i_puiFSampleDataSa2;
+//	if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VREV ||
+//			i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HREV)//逆序
+//	{
+//		iColorId_Tmp= i_pstStCalcParam_Use_New->i_byColorIdCurrent;
+//		if(i_pstStCalcParam_Use_New->i_byColorIdCurrent>1)
+//		{
+//			for(iM=1;iM<=i_pstStCalcParam_Use_New->i_byColorIdCurrent;iM++)
+//			{
+//				dwN_Tmp= (iM-1)*2*iEachGatePointsNr_Unit+ dwStart1;
+//				adwAdrStart_T1[iColorId_Tmp-1]= dwN_Tmp;
+//				dwN_Tmp= (iM-1)*2*iEachGatePointsNr_Unit+ dwStart2;
+//				adwAdrStart_T2[iColorId_Tmp-1]= dwN_Tmp;
+//				iColorId_Tmp= iColorId_Tmp-1;
+//			}
+//		}
+//		else
+//		{//色序小于2就不算误差了，直接丢失
+//			i_pstStCalcParam_Use_New->o_iRtn_V= -5;
+//			i_pstStCalcParam_Use_New->o_iRtn_H= -5;
+//			return 1;
+//		}
+//	}
+//	else
+//	{
+//		if(i_pstStCalcParam_Use_New->i_byColorIdCurrent>1)
+//		{
+//			for(iM=1;iM<=i_pstStCalcParam_Use_New->i_byColorIdCurrent;iM++)
+//			{
+//				dwN_Tmp= (iM-1)*2*iEachGatePointsNr_Unit+ dwStart1;
+//				adwAdrStart_T1[iM-1]= dwN_Tmp;
+//				dwN_Tmp= (iM-1)*2*iEachGatePointsNr_Unit+ dwStart2;
+//				adwAdrStart_T2[iM-1]= dwN_Tmp;
+//			}
+//		}
+//		else
+//		{//色序小于2就不算误差了，直接丢失
+//			i_pstStCalcParam_Use_New->o_iRtn_V= -5;
+//			i_pstStCalcParam_Use_New->o_iRtn_H= -5;
+//			return 1;
+//		}
+//	}
+//	//初始化一下数组2024.8.24.102323
+//	for(iM=0; iM<16; iM++)
+//	{
+//		for(iK=0;iK<3;iK++)
+//		{
+//			arMidlinePos_T1[iM][iK]= 0;
+//			arMidlinePos_T2[iM][iK]= 0;
+//			arWidthOfThresholdLevel_T1[iM][iK]=0;
+//			arWidthOfThresholdLevel_T2[iM][iK]=0;
+//			axThresholdLevelValidFlag_T1[iM][iK]= 0;
+//			axThresholdLevelValidFlag_T2[iM][iK]= 0;
+//			if(iM==0)
+//			{
+//				arMidlinePos_Tmp[iK]=0;
+//				arWidthOfThresholdLevel_Tmp[iK]=0;
+//				axThresholdLevelValidFlag_Tmp[iK]=0;
+//			}
+//		}
+//	}
+//	i_pstStCalcParam_Use_New->i_byThresNum= 3;
+//	i_pstStCalcParam_Use_New->i_iEachGatePointsNr= iEachGatePointsNr_Unit;
+//	i_pstStCalcParam_Use_New->i_rMinimumLimitSampVal= 1311;
+//
+//	i_pstStCalcParam_Use_New->i_xSignalPolarityIsNegative= 1;
+//
+//	//从这里开始分析波形-计算误差-------2024.8.21.174017----
+//	//1、先分析当前色和前一色的波形细节及计算跟前色误差2024.8.21.174046；
+//	for(iK=0;iK<3;iK++)
+//	{
+//		arMidlinePos_Tmp[iK]=0;
+//		arWidthOfThresholdLevel_Tmp[iK]=0;
+//		axThresholdLevelValidFlag_Tmp[iK]=0;
+//	}
+//	iColorId= i_pstStCalcParam_Use_New->i_byColorIdCurrent;
+//	KS_Singal_Process(
+//						(unsigned char)1,	//unsigned char i_xEn,
+//						(unsigned short*)adwAdrStart_T1[iColorId-1],	//unsigned short* i_puiFineData,
+//						(float)i_arBase[0],	//float i_rBase,
+//						(StCalcParam_Use_New*)i_pstStCalcParam_Use_New,	//StCalcParam_Use_New* i_pstStCalcParam_Use_New
+//						(float*)arWidthOfThresholdLevel_Tmp,
+//						(float*)arMidlinePos_Tmp,
+//						(unsigned char*)axThresholdLevelValidFlag_Tmp,
+//						i_pstStCalcParam_Use_New->byNum_PeakValueFilter,
+//						(unsigned short*)&i_pstStCalcParam_Use_New->auiPeakValue[0][iColorId-1][0],
+//						&i_pstStCalcParam_Use_New->abyCnt_PeakValue[0][iColorId-1]
+//					);
+//	for(iK=0;iK<3;iK++)
+//	{
+//		arWidthOfThresholdLevel_T1[iColorId-1][iK]= arWidthOfThresholdLevel_Tmp[iK];
+//		arMidlinePos_T1[iColorId-1][iK]= arMidlinePos_Tmp[iK];
+//		axThresholdLevelValidFlag_T1[iColorId-1][iK]= axThresholdLevelValidFlag_Tmp[iK];
+//		arMidlinePos_Tmp[iK]=0;
+//		arWidthOfThresholdLevel_Tmp[iK]=0;
+//		axThresholdLevelValidFlag_Tmp[iK]=0;
+//	}
+//
+//	KS_Singal_Process(
+//						1,	//unsigned char i_xEn,
+//						(unsigned short*)adwAdrStart_T2[iColorId-1],	//unsigned short* i_puiFineData,
+//						i_arBase[1],	//float i_rBase,
+//						i_pstStCalcParam_Use_New,	//StCalcParam_Use_New* i_pstStCalcParam_Use_New
+//						arWidthOfThresholdLevel_Tmp,
+//						arMidlinePos_Tmp,
+//						axThresholdLevelValidFlag_Tmp,
+//						i_pstStCalcParam_Use_New->byNum_PeakValueFilter,
+//						(unsigned short*)&i_pstStCalcParam_Use_New->auiPeakValue[1][iColorId-1][0],
+//						&i_pstStCalcParam_Use_New->abyCnt_PeakValue[1][iColorId-1]
+//					);
+//	for(iK=0;iK<3;iK++)
+//	{
+//		arWidthOfThresholdLevel_T2[iColorId-1][iK]= arWidthOfThresholdLevel_Tmp[iK];
+//		arMidlinePos_T2[iColorId-1][iK]= arMidlinePos_Tmp[iK];
+//		axThresholdLevelValidFlag_T2[iColorId-1][iK]= axThresholdLevelValidFlag_Tmp[iK];
+//		arMidlinePos_Tmp[iK]=0;
+//		arWidthOfThresholdLevel_Tmp[iK]=0;
+//		axThresholdLevelValidFlag_Tmp[iK]=0;
+//	}
+//	//分析完数据后，计算正常跟前色误差2024.8.21.174333---------------------------------------------------
+//	byErrorItemCountV= 0;
+//	byErrorItemCountH= 0;
+//	axThresLevelErrorValidV[0]=0;
+//	axThresLevelErrorValidV[1]=0;
+//	axThresLevelErrorValidV[2]=0;
+//	axThresLevelErrorValidH[0]=0;
+//	axThresLevelErrorValidH[1]=0;
+//	axThresLevelErrorValidH[2]=0;
+//	arThresLevelErrorV[0]= 0;
+//	arThresLevelErrorV[1]= 0;
+//	arThresLevelErrorV[2]= 0;
+//	arThresLevelErrorH[0]= 0;
+//	arThresLevelErrorH[1]= 0;
+//	arThresLevelErrorH[2]= 0;
+//
+//	for(iK=0; iK<3; iK++)
+//	{
+//		if(axThresholdLevelValidFlag_T1[iColorId-1][iK] &&
+//				axThresholdLevelValidFlag_T2[iColorId-1][iK])//阀值有效计数
+//		{
+//			byErrorItemCountV=byErrorItemCountV+1;//纵向误差计数
+//			axThresLevelErrorValidV[iK]=1;//当前阀值的纵向误差有效
+//			rTempVal_Calc= arMidlinePos_T1[iColorId-1][iK];
+//			rTempVal_Calc= rTempVal_Calc- arMidlinePos_T2[iColorId-1][iK];
+//			arThresLevelErrorV[iK]= rTempVal_Calc;
+//
+//			//横向误差统计
+//			byErrorItemCountH= byErrorItemCountH+1;//横向误差计数
+//			axThresLevelErrorValidH[iK]= 1;//当前阀值的横向误差有效
+//			rTempVal_Calc= arWidthOfThresholdLevel_T1[iColorId-1][iK];
+//			rTempVal_Calc= rTempVal_Calc- arWidthOfThresholdLevel_T2[iColorId-1][iK];
+//			arThresLevelErrorH[iK]= rTempVal_Calc;
+//		}
+//	}
+//	//计算一下实际误差
+//	if(byErrorItemCountV>0)
+//	{
+//		rResult_ErrV_Followpre= 0;
+//		for(iK=0;iK<3;iK++)
+//		{
+//			if(axThresLevelErrorValidV[iK])
+//			{
+//				rResult_ErrV_Followpre= arThresLevelErrorV[iK];
+//				break;
+//			}
+//		}
+//		//计算物理位置
+//		iResult_ErrV_Followpre= (short)(rResult_ErrV_Followpre*i_pstStCalcParam_Use_New->i_rInversedPrecision*100);
+//	}
+//	else//丢失
+//	{
+//		iResult_ErrV_Followpre= -32768;
+//	}
+//
+//	//计算跟前色横向；
+//	if(byErrorItemCountH>0)
+//	{
+//		rResult_ErrH_Followpre=0;
+//		for(iK=0;iK<3;iK++)
+//		{
+//			if(axThresLevelErrorValidH[iK])
+//			{
+//				rResult_ErrH_Followpre= arThresLevelErrorH[iK];
+//				break;
+//			}
+//		}
+//		switch(i_pstStCalcParam_Use_New->i_byMarkTypeId)
+//		{
+//			case MARK_TYPE_TRAPE_VFLP:
+//			case MARK_TYPE_TRAPE_VBLP:
+//			case MARK_TYPE_TRAPE_VFLN:
+//			case MARK_TPYE_TRAPE_VBLN:
+//				//计算物理距离
+//				if(i_pstStCalcParam_Use_New->i_byMarkTypeId== MARK_TYPE_TRAPE_VFLN ||
+//						i_pstStCalcParam_Use_New->i_byMarkTypeId==MARK_TPYE_TRAPE_VBLN)
+//				{
+//					rResult_ErrH_Followpre= -rResult_ErrH_Followpre;
+//				}
+//				//计算物理距离
+//				if(i_pstStCalcParam_Use_New->i_byTriMark_SideC!=0 && i_pstStCalcParam_Use_New->i_byTriMark_SideB!=0)
+//				{
+//					iResult_ErrH_Followpre= (short)(rResult_ErrH_Followpre*
+//										i_pstStCalcParam_Use_New->i_rInversedPrecision*100*
+//										i_pstStCalcParam_Use_New->i_byTriMark_SideB/
+//										i_pstStCalcParam_Use_New->i_byTriMark_SideC);
+//				}
+//				else
+//				{
+//					iResult_ErrH_Followpre= (short)(rResult_ErrH_Followpre*
+//										i_pstStCalcParam_Use_New->i_rInversedPrecision*100);
+//				}
+//				break;
+//			default:
+//				iResult_ErrH_Followpre=0;
+//				break;
+//		}
+//	}
+//	else
+//	{
+//		iResult_ErrH_Followpre=-32768;//丢失了
+//	}
+//	//计算跟前色误差完成，后面分析波形和计算误差都按照开关输入处理2024.8.21.174441-------------------
+//	//2.计算单眼跟1色误差
+//	if(i_pstStCalcParam_Use_New->i_xCalcErr_V_Single || i_pstStCalcParam_Use_New->i_xCalcErr_H_Single)//纵向单眼跟1色就需要增加分析1色波形数据
+//	{
+//		if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VREV ||
+//		   i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HREV)//逆序1色波形在T2
+//		{
+//			KS_Singal_Process(
+//								1,	//unsigned char i_xEn,
+//								(unsigned short*)adwAdrStart_T2[0],	//unsigned short* i_puiFineData,
+//								i_arBase[1],	//float i_rBase,
+//								i_pstStCalcParam_Use_New,	//StCalcParam_Use_New* i_pstStCalcParam_Use_New
+//								arWidthOfThresholdLevel_Tmp,
+//								arMidlinePos_Tmp,
+//								axThresholdLevelValidFlag_Tmp,
+//								i_pstStCalcParam_Use_New->byNum_PeakValueFilter,
+//								(unsigned short*)&i_pstStCalcParam_Use_New->auiPeakValue[1][0][0],
+//								&i_pstStCalcParam_Use_New->abyCnt_PeakValue[1][0]
+//							);
+//			for(iK=0;iK<3;iK++)
+//			{
+//				arWidthOfThresholdLevel_T2[0][iK]= arWidthOfThresholdLevel_Tmp[iK];
+//				arMidlinePos_T2[0][iK]= arMidlinePos_Tmp[iK];
+//				axThresholdLevelValidFlag_T2[0][iK]= axThresholdLevelValidFlag_Tmp[iK];
+//				arMidlinePos_Tmp[iK]=0;
+//				arWidthOfThresholdLevel_Tmp[iK]=0;
+//				axThresholdLevelValidFlag_Tmp[iK]=0;
+//			}
+//		}
+//		else
+//		{
+//			if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VFOR ||
+//			   i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HFOR)//顺序1色波形在T1
+//			{
+//				KS_Singal_Process(
+//									1,	//unsigned char i_xEn,
+//									(unsigned short*)adwAdrStart_T1[0],	//unsigned short* i_puiFineData,
+//									i_arBase[0],	//float i_rBase,
+//									i_pstStCalcParam_Use_New,	//StCalcParam_Use_New* i_pstStCalcParam_Use_New
+//									arWidthOfThresholdLevel_Tmp,
+//									arMidlinePos_Tmp,
+//									axThresholdLevelValidFlag_Tmp,
+//									i_pstStCalcParam_Use_New->byNum_PeakValueFilter,
+//									(unsigned short*)&i_pstStCalcParam_Use_New->auiPeakValue[0][0][0],
+//									&i_pstStCalcParam_Use_New->abyCnt_PeakValue[0][0]
+//								);
+//				for(iK=0;iK<3;iK++)
+//				{
+//					arWidthOfThresholdLevel_T1[0][iK]= arWidthOfThresholdLevel_Tmp[iK];
+//					arMidlinePos_T1[0][iK]= arMidlinePos_Tmp[iK];
+//					axThresholdLevelValidFlag_T1[0][iK]= axThresholdLevelValidFlag_Tmp[iK];
+//					arMidlinePos_Tmp[iK]=0;
+//					arWidthOfThresholdLevel_Tmp[iK]=0;
+//					axThresholdLevelValidFlag_Tmp[iK]=0;
+//				}
+//			}
+//		}
+//		//分析单眼1色波形完成计算误差
+//		byErrorItemCountV= 0;
+//		byErrorItemCountH= 0;
+//		axThresLevelErrorValidV[0]=0;
+//		axThresLevelErrorValidV[1]=0;
+//		axThresLevelErrorValidV[2]=0;
+//		axThresLevelErrorValidH[0]=0;
+//		axThresLevelErrorValidH[1]=0;
+//		axThresLevelErrorValidH[2]=0;
+//		arThresLevelErrorV[0]= 0;
+//		arThresLevelErrorV[1]= 0;
+//		arThresLevelErrorV[2]= 0;
+//		arThresLevelErrorH[0]= 0;
+//		arThresLevelErrorH[1]= 0;
+//		arThresLevelErrorH[2]= 0;
+//
+//		if(i_pstStCalcParam_Use_New->i_xCalcErr_V_Single)//计算纵向单眼跟1色误差
+//		{
+//			for(iK=0; iK<3; iK++)
+//			{
+//				if(((i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VREV ||
+//						i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HREV) && //逆序
+//						axThresholdLevelValidFlag_T2[0][iK] &&
+//						axThresholdLevelValidFlag_T2[iColorId-1][iK]) ||
+//						((i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VFOR ||
+//						i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HFOR) && //顺序
+//						axThresholdLevelValidFlag_T1[0][iK] &&
+//						axThresholdLevelValidFlag_T1[iColorId-1][iK]))//阀值有效计数
+//				{
+//					byErrorItemCountV=byErrorItemCountV+1;//纵向误差计数
+//					axThresLevelErrorValidV[iK]=1;//当前阀值的纵向误差有效
+//					if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VREV ||
+//						i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HREV)//逆序
+//					{
+//						rTempVal_Calc= arMidlinePos_T2[0][iK];
+//						rTempVal_Calc= rTempVal_Calc- arMidlinePos_T2[iColorId-1][iK];
+//						arThresLevelErrorV[iK]= rTempVal_Calc;
+//					}
+//					else
+//					{
+//						if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VFOR ||
+//							i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HFOR)//顺序
+//						{
+//							rTempVal_Calc= arMidlinePos_T1[iColorId-1][iK];
+//							rTempVal_Calc= rTempVal_Calc- arMidlinePos_T1[0][iK];
+//							arThresLevelErrorV[iK]= rTempVal_Calc;
+//						}
+//					}
+//				}
+//			}
+//			if(byErrorItemCountV>0)
+//			{
+//				rResult_ErrV_Follow_1U= 0;
+//				for(iK=0;iK<3;iK++)
+//				{
+//					if(axThresLevelErrorValidV[iK])
+//					{
+//						rResult_ErrV_Follow_1U= arThresLevelErrorV[iK];
+//						break;
+//					}
+//				}
+//				//计算物理距离
+//				iResult_ErrV_Follow_1U= (short)(rResult_ErrV_Follow_1U*i_pstStCalcParam_Use_New->i_rInversedPrecision*100);
+//			}
+//			else
+//			{
+//				iResult_ErrV_Follow_1U= -32768;
+//			}
+//		}
+//		if(i_pstStCalcParam_Use_New->i_xCalcErr_H_Single)//计算横向单眼跟1色误差
+//		{
+//			for(iK=0; iK<3; iK++)
+//			{
+//				if(((i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VREV ||
+//						i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HREV) && //逆序
+//						axThresholdLevelValidFlag_T2[0][iK] &&
+//						axThresholdLevelValidFlag_T2[iColorId-1][iK]) ||
+//						((i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VFOR ||
+//						i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HFOR) && //顺序
+//						axThresholdLevelValidFlag_T1[0][iK] &&
+//						axThresholdLevelValidFlag_T1[iColorId-1][iK]))//阀值有效计数
+//				{
+//					//横向误差统计
+//					byErrorItemCountH= byErrorItemCountH+1;//横向误差计数
+//					axThresLevelErrorValidH[iK]= 1;//当前阀值的横向误差有效
+//					if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VREV ||
+//						i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HREV)//逆序
+//					{
+//						rTempVal_Calc= arWidthOfThresholdLevel_T2[0][iK];
+//						rTempVal_Calc= rTempVal_Calc- arWidthOfThresholdLevel_T2[iColorId-1][iK];
+//						arThresLevelErrorH[iK]= rTempVal_Calc;
+//					}
+//					else
+//					{
+//						if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VFOR ||
+//							i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HFOR)//顺序
+//						{
+//							rTempVal_Calc= arWidthOfThresholdLevel_T1[iColorId-1][iK];
+//							rTempVal_Calc= rTempVal_Calc- arWidthOfThresholdLevel_T1[0][iK];
+//							arThresLevelErrorH[iK]= rTempVal_Calc;
+//						}
+//					}
+//				}
+//			}
+//			//计算单眼跟1色横向；
+//			if(byErrorItemCountH>0)
+//			{
+//				rResult_ErrH_Follow_1U=0;
+//				for(iK=0;iK<3;iK++)
+//				{
+//					if(axThresLevelErrorValidH[iK])
+//					{
+//						rResult_ErrH_Follow_1U= arThresLevelErrorH[iK];
+//						break;
+//					}
+//				}
+//				switch(i_pstStCalcParam_Use_New->i_byMarkTypeId)
+//				{
+//					case MARK_TYPE_TRAPE_VFLP:
+//					case MARK_TYPE_TRAPE_VBLP:
+//					case MARK_TYPE_TRAPE_VFLN:
+//					case MARK_TPYE_TRAPE_VBLN:
+//						//计算物理距离
+//						if(i_pstStCalcParam_Use_New->i_byMarkTypeId== MARK_TYPE_TRAPE_VFLN ||
+//								i_pstStCalcParam_Use_New->i_byMarkTypeId==MARK_TPYE_TRAPE_VBLN)
+//						{
+//							rResult_ErrH_Follow_1U= -rResult_ErrH_Follow_1U;
+//						}
+//						//计算物理距离
+//						if(i_pstStCalcParam_Use_New->i_byTriMark_SideC!=0 && i_pstStCalcParam_Use_New->i_byTriMark_SideB!=0)
+//						{
+//							iResult_ErrH_Follow_1U= (short)(rResult_ErrH_Follow_1U*
+//												i_pstStCalcParam_Use_New->i_rInversedPrecision*100*
+//												i_pstStCalcParam_Use_New->i_byTriMark_SideB/
+//												i_pstStCalcParam_Use_New->i_byTriMark_SideC);
+//						}
+//						else
+//						{
+//							iResult_ErrH_Follow_1U= (short)(rResult_ErrH_Follow_1U*
+//												i_pstStCalcParam_Use_New->i_rInversedPrecision*100);
+//						}
+//						break;
+//					default:
+//						iResult_ErrH_Follow_1U=0;
+//						break;
+//				}
+//			}
+//			else
+//			{
+//				iResult_ErrH_Follow_1U=-32768;//丢失了
+//			}
+//		}
+//	}
+//	//计算间接跟1色误差-需要把剩下的波形都分析了2024.8.21.175637---------------------------------
+//	if(i_pstStCalcParam_Use_New->i_xCalcErr_V_Follow_1U || i_pstStCalcParam_Use_New->i_xCalcErr_H_Follow_1U)
+//	{
+//		for(iM=1; iM<i_pstStCalcParam_Use_New->i_byColorIdCurrent-1;iM++)
+//		{
+//			KS_Singal_Process(
+//								1,	//unsigned char i_xEn,
+//								(unsigned short*)adwAdrStart_T1[iM],	//unsigned short* i_puiFineData,
+//								i_arBase[0],	//float i_rBase,
+//								i_pstStCalcParam_Use_New,	//StCalcParam_Use_New* i_pstStCalcParam_Use_New
+//								arWidthOfThresholdLevel_Tmp,
+//								arMidlinePos_Tmp,
+//								axThresholdLevelValidFlag_Tmp,
+//								i_pstStCalcParam_Use_New->byNum_PeakValueFilter,
+//								(unsigned short*)&i_pstStCalcParam_Use_New->auiPeakValue[0][iM][0],
+//								&i_pstStCalcParam_Use_New->abyCnt_PeakValue[0][iM]
+//							);
+//			for(iK=0;iK<3;iK++)
+//			{
+//				arWidthOfThresholdLevel_T1[iM][iK]= arWidthOfThresholdLevel_Tmp[iK];
+//				arMidlinePos_T1[iM][iK]= arMidlinePos_Tmp[iK];
+//				axThresholdLevelValidFlag_T1[iM][iK]= axThresholdLevelValidFlag_Tmp[iK];
+//				arMidlinePos_Tmp[iK]=0;
+//				arWidthOfThresholdLevel_Tmp[iK]=0;
+//				axThresholdLevelValidFlag_Tmp[iK]=0;
+//			}
+//			KS_Singal_Process(
+//								1,	//unsigned char i_xEn,
+//								(unsigned short*)adwAdrStart_T2[iM],	//unsigned short* i_puiFineData,
+//								i_arBase[1],	//float i_rBase,
+//								i_pstStCalcParam_Use_New,//StCalcParam_Use_New* i_pstStCalcParam_Use_New
+//								arWidthOfThresholdLevel_Tmp,
+//								arMidlinePos_Tmp,
+//								axThresholdLevelValidFlag_Tmp,
+//								i_pstStCalcParam_Use_New->byNum_PeakValueFilter,
+//								(unsigned short*)(&i_pstStCalcParam_Use_New->auiPeakValue[1][iM][0]),
+//								&i_pstStCalcParam_Use_New->abyCnt_PeakValue[1][iM]
+//							);
+//			for(iK=0;iK<3;iK++)
+//			{
+//				arWidthOfThresholdLevel_T2[iM][iK]= arWidthOfThresholdLevel_Tmp[iK];
+//				arMidlinePos_T2[iM][iK]= arMidlinePos_Tmp[iK];
+//				axThresholdLevelValidFlag_T2[iM][iK]= axThresholdLevelValidFlag_Tmp[iK];
+//				arMidlinePos_Tmp[iK]=0;
+//				arWidthOfThresholdLevel_Tmp[iK]=0;
+//				axThresholdLevelValidFlag_Tmp[iK]=0;
+//			}
+//		}
+//		//在这里已经得到所有计算误差需要的细节2024.8.21.091958，可以计算误差了
+//		rTmp=0;
+//		rTmp1=0;
+//		rResult_ErrV_Follow_1U_New= 0;
+//		xFlag_Vaild_V=0;
+//		xFlag_Vaild_H=0;
+//		iColorId= i_pstStCalcParam_Use_New->i_byColorIdCurrent;
+//		byErrorItemCountV= 0;
+//		byErrorItemCountH= 0;
+//		axThresLevelErrorValidV[0]=0;
+//		axThresLevelErrorValidV[1]=0;
+//		axThresLevelErrorValidV[2]=0;
+//		axThresLevelErrorValidH[0]=0;
+//		axThresLevelErrorValidH[1]=0;
+//		axThresLevelErrorValidH[2]=0;
+//		arThresLevelErrorV[0]= 0;
+//		arThresLevelErrorV[1]= 0;
+//		arThresLevelErrorV[2]= 0;
+//		arThresLevelErrorH[0]= 0;
+//		arThresLevelErrorH[1]= 0;
+//		arThresLevelErrorH[2]= 0;
+//
+//		for(iK=0;iK<3;iK++)
+//		{
+//			byErrorItemCountV= 0;
+//			for(iM=1;iM<iColorId;iM++)
+//			{
+//				if(axThresholdLevelValidFlag_T1[iM][iK] && axThresholdLevelValidFlag_T2[iM][iK])
+//				{
+//					byErrorItemCountV= byErrorItemCountV+1;
+//				}
+//			}
+//			if(byErrorItemCountV==iColorId-1)//到最后1色，如果这个阀值下所有的特征都有效，就用这个阀值计算误差
+//			//就用这个特征计算了
+//			{
+//				iLevel_Use=iK;
+//				xFlag_Vaild_V=1;
+//				xFlag_Vaild_H=1;
+//				break;
+//			}
+//			if(iK==2 && byErrorItemCountV<iColorId-1)//所有循环结束都未找到合适阀值，丢失
+//			{
+//				xFlag_Vaild_V=0;
+//				xFlag_Vaild_H=0;
+//			}
+//		}
+//		if(i_pstStCalcParam_Use_New->i_xCalcErr_V_Follow_1U)//计算纵向间接跟1色误差2024.8.21.180006----
+//		{
+//			if(xFlag_Vaild_V)
+//			{
+//				for(iM=1;iM<iColorId;iM++)
+//				{//计算纵向的误差
+//					rTmp= rTmp+arMidlinePos_T1[iM][iLevel_Use];
+//					rTmp1= rTmp1+ arMidlinePos_T2[iM][iLevel_Use];
+//					if(iM==iColorId-1)
+//					{//累加完成计算结果
+//						rResult_ErrV_Follow_1U_New= rTmp- rTmp1;
+//						//直接计算物理位置
+//						iResult_ErrV_Follow_1U_New= (short)(rResult_ErrV_Follow_1U_New*i_pstStCalcParam_Use_New->i_rInversedPrecision*100);
+//					}
+//				}
+//			}
+//			else
+//			{
+//				iResult_ErrV_Follow_1U_New= -32768;
+//			}
+//		}
+//		if(i_pstStCalcParam_Use_New->i_xCalcErr_H_Follow_1U)//计算横向间接跟1色误差2024.8.21.180006----
+//		{
+//			if(xFlag_Vaild_H)
+//			{
+//				//计算横向误差
+//				switch(i_pstStCalcParam_Use_New->i_byMarkTypeId)
+//				{
+//					case MARK_TYPE_TRAPE_VFLP:
+//					case MARK_TYPE_TRAPE_VBLP:
+//					case MARK_TYPE_TRAPE_VFLN:
+//					case MARK_TPYE_TRAPE_VBLN:
+//						if(i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_VREV ||
+//								i_pstStCalcParam_Use_New->i_iMarkArrangeModal==MARK_ARRANGE_HREV)
+//						{
+//							rResult_ErrH_Follow_1U_New= arWidthOfThresholdLevel_T1[1][iLevel_Use]-
+//									arWidthOfThresholdLevel_T2[iColorId-1][iLevel_Use];
+//						}
+//						else
+//						{
+//							rResult_ErrH_Follow_1U_New= arWidthOfThresholdLevel_T1[iColorId-1][iLevel_Use]-
+//									arWidthOfThresholdLevel_T2[1][iLevel_Use];
+//						}
+//						if(i_pstStCalcParam_Use_New->i_byMarkTypeId== MARK_TYPE_TRAPE_VFLN ||
+//								i_pstStCalcParam_Use_New->i_byMarkTypeId==MARK_TPYE_TRAPE_VBLN)
+//						{
+//							rResult_ErrH_Follow_1U_New= -rResult_ErrH_Follow_1U_New;
+//						}
+//						//计算物理距离
+//						if(i_pstStCalcParam_Use_New->i_byTriMark_SideC!=0 && i_pstStCalcParam_Use_New->i_byTriMark_SideB!=0)
+//						{
+//							iResult_ErrH_Follow_1U_New= (short)(rResult_ErrH_Follow_1U_New*
+//												i_pstStCalcParam_Use_New->i_rInversedPrecision*100*
+//												i_pstStCalcParam_Use_New->i_byTriMark_SideB/
+//												i_pstStCalcParam_Use_New->i_byTriMark_SideC);
+//						}
+//						else
+//						{
+//							iResult_ErrH_Follow_1U_New= (short)(rResult_ErrH_Follow_1U_New*100*
+//												i_pstStCalcParam_Use_New->i_rInversedPrecision);
+//						}
+//						break;
+//					default:
+//						iResult_ErrH_Follow_1U_New= 0;
+//						break;
+//				}
+//			}
+//			else
+//			{
+//				iResult_ErrH_Follow_1U_New= -32768;
+//			}
+//		}
+//	}
+//	//到这里已经计算出了所有三组误差2024.8.21.161132-----------------------------------开始处理误差平均等
+//	//这里就要根据实际使用误差-对误差进行平均处理2024.8.21.180731----------
+//	if(i_pstStCalcParam_Use_New->i_xUseErr_V_Single)//纵向用单眼跟1色
+//	{
+//		rVerrResult_Ave= (float)iResult_ErrV_Follow_1U;
+//	}
+//	else if(i_pstStCalcParam_Use_New->i_xUseErr_V_Follow_1U)//纵向用间接跟1色
+//	{
+//		rVerrResult_Ave= iResult_ErrV_Follow_1U_New;
+//	}
+//	else
+//	{
+//		rVerrResult_Ave= (float)iResult_ErrV_Followpre;//默认用跟前色误差
+//	}
+//
+//	if(i_pstStCalcParam_Use_New->i_xUseErr_H_Single)//横向用单眼跟1色
+//	{
+//		rHerrResult_Ave= (float)iResult_ErrH_Follow_1U;
+//	}
+//	else if(i_pstStCalcParam_Use_New->i_xUseErr_H_Follow_1U)//横向用间接跟1色
+//	{
+//		rHerrResult_Ave= (float)iResult_ErrH_Follow_1U_New;
+//	}
+//	else
+//	{
+//		rHerrResult_Ave= (float)iResult_ErrH_Followpre;
+//	}
+//
+//	//误差平均2023.4.26.151159
+//	if(rVerrResult_Ave != -32768)//非丢失-纵向平均
+//	{
+//		if (i_pstStCalcParam_Use_New->iBufferedIndexWr>=20)
+//		{
+//			i_pstStCalcParam_Use_New->iBufferedIndexWr= i_pstStCalcParam_Use_New->iBufferedIndexWr-20;
+//		}
+//		i_pstStCalcParam_Use_New->alrErrorBufferedV[i_pstStCalcParam_Use_New->iBufferedIndexWr]= rVerrResult_Ave; //(*纵向误差存起来*)
+//		i_pstStCalcParam_Use_New->iBufferedIndexWr= i_pstStCalcParam_Use_New->iBufferedIndexWr+1;
+//
+//		if (i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast<i_pstStCalcParam_Use_New->i_iAverage_V)
+//		{
+//			i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast= i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast+1; //(*只记录到基础边界*)
+//		}
+//		else
+//		{
+//			//(*纵向误差平均处理*)
+//			if (i_pstStCalcParam_Use_New->i_iAverage_V>1)
+//			{
+//				i_pstStCalcParam_Use_New->iBufferedIndexRd= i_pstStCalcParam_Use_New->iBufferedIndexWr;
+//				rSumTotal= 0;
+//				for (iIndex=0; iIndex<i_pstStCalcParam_Use_New->i_iAverage_V; iIndex++)
+//				{
+//					i_pstStCalcParam_Use_New->iBufferedIndexRd= i_pstStCalcParam_Use_New->iBufferedIndexRd-1;
+//					rSumTotal= rSumTotal+i_pstStCalcParam_Use_New->alrErrorBufferedV[i_pstStCalcParam_Use_New->iBufferedIndexRd];
+//					if (i_pstStCalcParam_Use_New->iBufferedIndexRd<=0)
+//					{
+//						i_pstStCalcParam_Use_New->iBufferedIndexRd= i_pstStCalcParam_Use_New->iBufferedIndexRd+20;
+//					}
+//				}
+//				rVerrResult_Ave= rSumTotal/i_pstStCalcParam_Use_New->i_iAverage_V;
+//			}
+//		}
+//		i_pstStCalcParam_Use_New->iCountForSignalLost= 0;
+//		i_pstStCalcParam_Use_New->o_iVResult= (short)(rVerrResult_Ave-(i_pstStCalcParam_Use_New->i_rAdjust_V*100));
+//		i_pstStCalcParam_Use_New->o_iRtn_V= 0;
+//	}
+//	else
+//	{
+//		i_pstStCalcParam_Use_New->iCountForSignalLost= i_pstStCalcParam_Use_New->iCountForSignalLost+1;
+//		if (i_pstStCalcParam_Use_New->iCountForSignalLost>3) //(*连续丢失3幅就重新开始计平均*)
+//		{
+//			i_pstStCalcParam_Use_New->iBufferedIndexWr= 0;
+//			i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast= 0;
+//		}
+//		i_pstStCalcParam_Use_New->o_iRtn_V= -3;
+//	}
+//
+//	//(*将当前误差缓存到历史误差中|index的初始值为0很重要*)
+//	//2020.6.13.140431||数组超限，>20更改为>=20
+//	if(rHerrResult_Ave != -32768)//非丢失
+//	{
+//		if (i_pstStCalcParam_Use_New->iBufferedIndexWr_H>=20)
+//		{
+//			i_pstStCalcParam_Use_New->iBufferedIndexWr_H= i_pstStCalcParam_Use_New->iBufferedIndexWr_H-20;
+//		}
+//		i_pstStCalcParam_Use_New->alrErrorBufferedH[i_pstStCalcParam_Use_New->iBufferedIndexWr_H]= rHerrResult_Ave; //(*横向误差存起来*)
+//		i_pstStCalcParam_Use_New->iBufferedIndexWr_H= i_pstStCalcParam_Use_New->iBufferedIndexWr_H+1;
+//
+//		if (i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast_H<i_pstStCalcParam_Use_New->i_iAverage_H )
+//		{
+//			i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast_H= i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast_H+1; //(*只记录到基础边界*)
+//		}
+//		else
+//		{
+//			//(*横向误差平均处理*)
+//			if (i_pstStCalcParam_Use_New->i_iAverage_H>1)
+//			{
+//				i_pstStCalcParam_Use_New->iBufferedIndexRd_H= i_pstStCalcParam_Use_New->iBufferedIndexWr_H;
+//				rSumTotal= 0;
+//				for (iIndex=0; iIndex<i_pstStCalcParam_Use_New->i_iAverage_H; iIndex++)
+//				{
+//					i_pstStCalcParam_Use_New->iBufferedIndexRd_H= i_pstStCalcParam_Use_New->iBufferedIndexRd_H-1;
+//					rSumTotal= rSumTotal+i_pstStCalcParam_Use_New->alrErrorBufferedH[i_pstStCalcParam_Use_New->iBufferedIndexRd_H];
+//					//2020.6.13.154148||niu,j|索引超限
+//					if (i_pstStCalcParam_Use_New->iBufferedIndexRd_H<=0)
+//					{
+//						i_pstStCalcParam_Use_New->iBufferedIndexRd_H= i_pstStCalcParam_Use_New->iBufferedIndexRd_H+20;
+//					}
+//				}
+//				rHerrResult_Ave= rSumTotal/i_pstStCalcParam_Use_New->i_iAverage_H;
+//			}
+//		}
+//		i_pstStCalcParam_Use_New->iCountForSignalLost_H= 0;
+// 		i_pstStCalcParam_Use_New->o_iHResult= (short)(rHerrResult_Ave-(i_pstStCalcParam_Use_New->i_rAdjust_H*100));
+//		i_pstStCalcParam_Use_New->o_iRtn_H= 0;
+//	}
+//	else
+//	{
+//		i_pstStCalcParam_Use_New->iCountForSignalLost_H= i_pstStCalcParam_Use_New->iCountForSignalLost_H+1;
+//		if (i_pstStCalcParam_Use_New->iCountForSignalLost_H>3) //(*连续丢失3幅就重新开始计平均*)
+//		{
+//			i_pstStCalcParam_Use_New->iBufferedIndexWr_H= 0;
+//			i_pstStCalcParam_Use_New->iPushedErrItemsAtLeast_H= 0;
+//		}
+//		i_pstStCalcParam_Use_New->o_iRtn_H= -3;
+//	}
+//
+//	i_pstStCalcParam_Use_New->iResult_V_Followpre= iResult_ErrV_Followpre;
+//	i_pstStCalcParam_Use_New->iResult_H_Followpre= iResult_ErrH_Followpre;
+//	i_pstStCalcParam_Use_New->iResult_V_Follow_1U= iResult_ErrV_Follow_1U;
+//	i_pstStCalcParam_Use_New->iResult_H_Follow_1U= iResult_ErrH_Follow_1U;
+//	i_pstStCalcParam_Use_New->iResult_V_Follow_1U_New= iResult_ErrV_Follow_1U_New;
+//	i_pstStCalcParam_Use_New->iResult_H_Follow_1U_New= iResult_ErrH_Follow_1U_New;
+//
+//	//2024.8.21.080456全新的计算误差了---------------------------------------niuj
+//	return 0;
+//}
+//
+//unsigned char KS_Singal_Process(
+//		unsigned char i_xEn,
+//		unsigned short* i_puiFineData,
+//		float i_rBase,
+//		StCalcParam_Use_New* i_pstStCalcParam_Use_New,
+//		float i_parWidthOfThressholdLevel[3],
+//		float i_parMidlinePos[3],
+//		unsigned char i_paxThresholdLevelValidFlag[3],
+//		unsigned char i_byNum_PeakValueFilter,
+//	  unsigned short auiData_Filter[10],//对波形峰值进行滤波
+//		unsigned char* i_pbyCnt_PeakValueFilter)
+//{
+//	//变量定义2024.8.20.104125------------------------------------------------------------
+//	unsigned char xResult;
+//	float rBaseLine;//计算的基线
+//	unsigned short uiMinValue;//信号最小值
+//	unsigned short uiMaxValue;//信号最大值
+//	short iMinValuePos;//最小值位置
+//	short iMaxValuePos;//最大值位置
+//	unsigned short auiTemp_FilterPoint[3];//滤波临时数组
+//	float rSignalEffectiveScope;//信号有效幅度
+//	short iPeakValuePos;//峰值位置
+//	float arScopeLevelRatio[3];//阀值线位置3zu
+//	short iLevel;
+//	unsigned char axThresholdLevelValidFlag[3];//阀值有效标志
+//	unsigned char abyEdgeCrossPointTotalNumLR[3][2];//阀值与信号相交点前后沿计数
+//	float arEdgeCrossPointPosLR[3][2];//前后沿位置
+//	float arMidlinePos[3];//计算误差定位
+//	float arWidthOfThresholdLevel[3];//阀值切割面宽度-横向误差定位
+//	float rTmpVal;
+//	short iPoint;
+//	float arThreshold[3];//阀值位置
+//	short iEdgeTotalFoundNum;//前后沿数量
+//	unsigned char xCanParsingThresholdLevel;//可以正常进行误差计算
+//	unsigned char xReqCommit;//
+//	float rAdditionCX;
+//
+//	//变量定义2024.8.20.104140============================================================
+//	xResult=0;
+//	if(i_xEn)
+//	{
+//		if(i_puiFineData!=0)
+//		{
+//			for(iLevel=0; iLevel<i_pstStCalcParam_Use_New->i_byThresNum;iLevel++)
+//			{
+//				arWidthOfThresholdLevel[iLevel]= 0;
+//				arMidlinePos[iLevel]= 0;
+//				axThresholdLevelValidFlag[iLevel]= 0;
+//			}
+//			//计算一下基线--这里的极性处理怎么办呢？
+//			if(i_pstStCalcParam_Use_New->i_xCalcBaselineByData_FS_OR_RS)
+//			{
+//				KS_CalcBaselineByData_FS_Singal(i_puiFineData,//精采样数据入口地址1
+//												i_pstStCalcParam_Use_New->i_iEachGatePointsNr,//精采样点数|默认按0.02系统精度是20mm宽度
+//												1,//信号极性|原始采集信号反极性，显示做了反向处理
+//												1,//二次校准基线
+//												&rBaseLine);
+//			}
+//			else
+//			{//粗采样基线
+//				rBaseLine= i_rBase*(float)256;
+//			}
+//
+//			KS_FilterPoints_FS(
+//								i_puiFineData,
+//								i_pstStCalcParam_Use_New->i_iEachGatePointsNr,
+//								&uiMinValue,
+//								&iMinValuePos,
+//								&uiMaxValue,
+//								&iMaxValuePos,
+//								auiFSampData_Filtered,
+//								auiTemp_FilterPoint,
+//								&rSignalEffectiveScope,
+//								&iPeakValuePos,
+//								(unsigned char)3,
+//								(unsigned char)1,
+//								rBaseLine,
+//								i_byNum_PeakValueFilter,
+//								auiData_Filter,
+//								i_pbyCnt_PeakValueFilter
+//							);//到这里已经统计出了信号的有效幅度、最大值最小值等信息,
+//
+//			//开始计算阀值位置
+//			arScopeLevelRatio[0]= 0.5;
+//			arScopeLevelRatio[1]= 0.25;
+//			arScopeLevelRatio[2]= 0.75;
+//
+//			for(iLevel=0;iLevel<3;iLevel++)
+//			{//先初始化一下位置及标志//顺道就计算出了阀值具体位置
+//				axThresholdLevelValidFlag[iLevel]= 0;
+//				abyEdgeCrossPointTotalNumLR[iLevel][0]= 0;
+//				abyEdgeCrossPointTotalNumLR[iLevel][1]= 0;
+//				arEdgeCrossPointPosLR[iLevel][0]= 0;
+//				arEdgeCrossPointPosLR[iLevel][1]= 0;
+//				arMidlinePos[iLevel]= 0;
+//				arWidthOfThresholdLevel[iLevel]= 0;
+//				rTmpVal= rBaseLine;
+//				if(i_pstStCalcParam_Use_New->i_xSignalPolarityIsNegative)
+//				{
+//					rTmpVal= rTmpVal- rSignalEffectiveScope * arScopeLevelRatio[iLevel];
+//				}
+//				else
+//				{
+//					rTmpVal= rTmpVal+ rSignalEffectiveScope * arScopeLevelRatio[iLevel];
+//				}
+//				arThreshold[iLevel]= rTmpVal;
+//			}
+//			//小信号处理
+//			if(rSignalEffectiveScope<i_pstStCalcParam_Use_New->i_rMinimumLimitSampVal)
+//			{
+//				xCanParsingThresholdLevel= 0;
+//			}
+//			else
+//			{//正常情况是需要根据阀值进行误差计算的
+//				xCanParsingThresholdLevel= 1;
+//			}
+//			if(xCanParsingThresholdLevel)
+//			{
+//				for(iPoint=iPeakValuePos;iPoint>1;iPoint--)
+//				{
+//					iEdgeTotalFoundNum= 0;
+//					for(iLevel=0;iLevel<i_pstStCalcParam_Use_New->i_byThresNum;iLevel++)
+//					{
+//						if(abyEdgeCrossPointTotalNumLR[iLevel][0]==0)
+//						{
+//							xReqCommit= 0;
+//							if(i_pstStCalcParam_Use_New->i_xSignalPolarityIsNegative)//反极性
+//							{
+//								if(auiFSampData_Filtered[iPoint]<= arThreshold[iLevel] &&
+//											auiFSampData_Filtered[iPoint-1]>arThreshold[iLevel])
+//								{
+//									xReqCommit=1;//找到一个阀值交点
+//								}
+//							}
+//							else//正信号
+//							{
+//								if(auiFSampData_Filtered[iPoint]>= arThreshold[iLevel] &&
+//										auiFSampData_Filtered[iPoint-1]< arThreshold[iLevel])
+//								{
+//									xReqCommit= 1;//找到一个前沿交点
+//								}
+//							}
+//							if(xReqCommit)
+//							{
+//								abyEdgeCrossPointTotalNumLR[iLevel][0]= 1;//找到一个前沿
+//							}
+//							rAdditionCX=KS_RatioL_ByThresholdCutting(
+//																		arThreshold[iLevel],
+//																		auiFSampData_Filtered[iPoint-1],
+//																		auiFSampData_Filtered[iPoint]);//计算跨点的%
+//							arEdgeCrossPointPosLR[iLevel][0]= (iPoint-1)+ rAdditionCX;
+//						}
+//						//统计前沿数量
+//						iEdgeTotalFoundNum= iEdgeTotalFoundNum+abyEdgeCrossPointTotalNumLR[iLevel][0];
+//					}
+//					if(iEdgeTotalFoundNum>= i_pstStCalcParam_Use_New->i_byThresNum)
+//					{
+//						break;
+//					}
+//				}
+//				//该统计后沿了
+//				for(iPoint= iPeakValuePos;iPoint<i_pstStCalcParam_Use_New->i_iEachGatePointsNr-1;iPoint++)
+//				{
+//					iEdgeTotalFoundNum= 0;
+//					for(iLevel=0;iLevel<i_pstStCalcParam_Use_New->i_byThresNum;iLevel++)
+//					{
+//						if(abyEdgeCrossPointTotalNumLR[iLevel][1]==0)
+//						{
+//							xReqCommit=0;
+//							if(i_pstStCalcParam_Use_New->i_xSignalPolarityIsNegative)//反极性
+//							{
+//								if(auiFSampData_Filtered[iPoint]<= arThreshold[iLevel] &&
+//											auiFSampData_Filtered[iPoint+1]> arThreshold[iLevel])
+//								{
+//									xReqCommit= 1;
+//								}
+//							}
+//							else//正信号
+//							{
+//								if(auiFSampData_Filtered[iPoint]>= arThreshold[iLevel] &&
+//										auiFSampData_Filtered[iPoint+1]<arThreshold[iLevel])
+//								{
+//									xReqCommit= 1;
+//								}
+//							}
+//							if(xReqCommit)
+//							{
+//								abyEdgeCrossPointTotalNumLR[iLevel][1]= 1;//后沿找到一个
+//								rAdditionCX=KS_RatioL_ByThresholdCutting(
+//																			arThreshold[iLevel],
+//																			auiFSampData_Filtered[iPoint],
+//																			auiFSampData_Filtered[iPoint+1]);//计算跨点的%
+//								arEdgeCrossPointPosLR[iLevel][1]= iPoint+rAdditionCX;
+//							}
+//						}
+//						iEdgeTotalFoundNum= iEdgeTotalFoundNum+abyEdgeCrossPointTotalNumLR[iLevel][1];
+//					}
+//					if(iEdgeTotalFoundNum>= i_pstStCalcParam_Use_New->i_byThresNum)
+//					{
+//						break;//后沿找够了
+//					}
+//				}
+//			}
+//
+//			//交点找完2024.8.20.200134，分析细节
+//			for(iLevel=0;iLevel<i_pstStCalcParam_Use_New->i_byThresNum;iLevel++)
+//			{
+//				if(abyEdgeCrossPointTotalNumLR[iLevel][0]==1 &&//前沿找到
+//						abyEdgeCrossPointTotalNumLR[iLevel][1]==1)//后沿找到
+//				{
+//					axThresholdLevelValidFlag[iLevel]= 1;//标记这个阀值有效
+//					arWidthOfThresholdLevel[iLevel]=
+//						arEdgeCrossPointPosLR[iLevel][1]-
+//						arEdgeCrossPointPosLR[iLevel][0];//阀值切割面宽度
+//					switch(i_pstStCalcParam_Use_New->i_byMarkTypeId)
+//					{
+//						case MARK_TYPE_TRAPE_VFLP: case MARK_TYPE_TRAPE_VFLN:
+//							arMidlinePos[iLevel]=
+//								arEdgeCrossPointPosLR[iLevel][0];//纵向误差计算位置为前沿
+//							break;
+//						case MARK_TYPE_TRAPE_VBLP: case MARK_TPYE_TRAPE_VBLN:
+//							arMidlinePos[iLevel]=
+//							 arEdgeCrossPointPosLR[iLevel][1];//纵向误差计算位置为后沿
+//							break;
+//						default:
+//							arMidlinePos[iLevel]= (arEdgeCrossPointPosLR[iLevel][0]+
+//								arEdgeCrossPointPosLR[iLevel][1])/2;
+//					}
+//				}
+//			}
+//			for(iLevel=0;iLevel<i_pstStCalcParam_Use_New->i_byThresNum;iLevel++)
+//			{
+//				i_parWidthOfThressholdLevel[iLevel]= arWidthOfThresholdLevel[iLevel];
+//				i_parMidlinePos[iLevel]= arMidlinePos[iLevel];
+//				i_paxThresholdLevelValidFlag[iLevel]= axThresholdLevelValidFlag[iLevel];
+//			}
+//		}
+//		else
+//		{
+//			;
+//		}
+//		xResult=1;
+//	}
+//	return xResult;
+//}
+//
+//void KS_FilterPoints_FS(
+//						unsigned short* i_puiFineData,//¾«²ÉÑùÊý¾ÝÆðÊ¼
+//						short i_iEachGatePointsNr,//µãÊý
+//						unsigned short* i_puiMinValue,//×îÐ¡Öµ
+//						short* i_piMinValuePos,//×îÐ¡ÖµÎ»ÖÃ
+//						unsigned short* i_puiMaxValue,//×î´óÖµ
+//						short* i_piMaxValuePos,//×î´óÖµÎ»ÖÃ
+//						unsigned short i_pauiFSData_Filtered[1500],//ÂË²¨ºóµÄÊý¾Ý
+//						unsigned short i_pauiTemp_FilerPort[3],//ÂË²¨ÐèÒªµÄÊý×é
+//						float* i_prSignalEffectiveScope,//ÓÐÐ§·ù¶È
+//						short* i_piPeakValuePos,//·åÖµÎ»ÖÃ
+//						unsigned char i_byFilterPoints,//ÂË²¨´ÎÊý
+//						unsigned char i_xSignalPolarityIsNegative,//¼«ÐÔ
+//						float i_rBase,//»ùÏß,//基线
+//						//2024.8.31.170638
+//						unsigned char i_byNum_PeakValueFilter,//波形峰值滤波次数
+//						unsigned short auiData_Filter[10],//对波形峰值进行滤波
+//						unsigned char* i_pbyCnt_PeakValueFilter//对波形峰值进行滤波
+//					)
+//{
+//	short iN;
+//	short iPoint;
+//	float rSumTotal;
+//	float rTmpVal;
+//	unsigned short* puiFSDataTemp;
+//	unsigned short uiPeakValue_Temp;
+//	unsigned short uiPeakValue_Use;
+//	//unsigned short* puiData_Filter_tmp;
+//	int diSum;
+//
+//	if(i_puiFineData!=0 && i_iEachGatePointsNr>0 && i_iEachGatePointsNr<=3000 &&
+//		i_puiMinValue!=0 && i_byFilterPoints>=1 && i_byFilterPoints<=10 &&
+//		i_piMinValuePos!=0 && i_puiMaxValue!=0 && i_piMaxValuePos!=0 &&
+//		i_pauiFSData_Filtered!=0 && i_pauiTemp_FilerPort!=0 && i_prSignalEffectiveScope!=0 &&
+//		i_piPeakValuePos!=0)
+//	{
+//		puiFSDataTemp= i_puiFineData;
+//		*i_puiMinValue= *puiFSDataTemp;
+//		*i_puiMaxValue= *puiFSDataTemp;
+//		*i_piMinValuePos= 1;
+//		*i_piMaxValuePos= 1;
+//
+//		for(iPoint=0;iPoint<i_iEachGatePointsNr;iPoint++)
+//		{//先进行滤波处理
+//
+//			if(i_byFilterPoints>1 && iPoint>=i_byFilterPoints-1)
+//			{//默认滤波次数3
+//				rSumTotal=0;
+//				i_pauiTemp_FilerPort[2]= *puiFSDataTemp;
+//				for(iN=0;iN<i_byFilterPoints;iN++)
+//				{
+//					rSumTotal=rSumTotal+i_pauiTemp_FilerPort[iN];
+//				}//先求和再平移，空出最后一个位置
+//				i_pauiTemp_FilerPort[0]= i_pauiTemp_FilerPort[1];
+//				i_pauiTemp_FilerPort[1]= i_pauiTemp_FilerPort[2];
+//				i_pauiFSData_Filtered[iPoint]= (unsigned short)(rSumTotal/(float)i_byFilterPoints);
+//			}
+//			else//达不到滤波条件，直接记录原始值
+//			{
+//				if(iPoint==0 || iPoint==1)
+//				{
+//					i_pauiFSData_Filtered[iPoint]= *puiFSDataTemp;
+//
+//					i_pauiTemp_FilerPort[iPoint]= *puiFSDataTemp;
+//				}
+//			}
+//			//更新最大值、最小值
+//			if(i_pauiFSData_Filtered[iPoint]>*i_puiMaxValue)
+//			{
+//				*i_puiMaxValue= i_pauiFSData_Filtered[iPoint];
+//				*i_piMaxValuePos= iPoint;
+//			}
+//			if(i_pauiFSData_Filtered[iPoint]<*i_puiMinValue)
+//			{
+//				*i_puiMinValue= i_pauiFSData_Filtered[iPoint];
+//				*i_piMinValuePos= iPoint;
+//			}
+//			puiFSDataTemp=puiFSDataTemp+1;
+//		}
+//
+//		//滤波完成-最大最小值统计完成，更新有效赋值
+//		if(i_xSignalPolarityIsNegative)//反极性
+//			//反极性峰值位置就是最小值位置
+//		{
+//			*i_piPeakValuePos= *i_piMinValuePos;
+//			//有效幅度
+//			uiPeakValue_Temp=  *i_puiMinValue;
+//		}
+//		else//正极性峰值位置是最大值位置
+//		{
+//			*i_piPeakValuePos= *i_piMaxValuePos;
+//			//有效幅度
+//			uiPeakValue_Temp=  *i_puiMaxValue;
+//		}
+//
+//		//2024.8.31.173944在这里处理一下峰值滤波2024.8.31.174019
+//		if(i_byNum_PeakValueFilter==0 || i_byNum_PeakValueFilter==1 || i_byNum_PeakValueFilter>10)
+//		{
+//			uiPeakValue_Use= uiPeakValue_Temp;
+//		}
+//		else
+//		{
+//			if(*i_pbyCnt_PeakValueFilter<i_byNum_PeakValueFilter-1)
+//			{
+//				uiPeakValue_Use= uiPeakValue_Temp;
+//				auiData_Filter[*i_pbyCnt_PeakValueFilter]=	uiPeakValue_Temp;////幅数累计不够，就先按原始值处理
+//				(*i_pbyCnt_PeakValueFilter)++;//先把数组填值
+//			}
+//			else
+//			{
+//				*i_pbyCnt_PeakValueFilter= i_byNum_PeakValueFilter-1;
+//				diSum=0;
+//				auiData_Filter[*i_pbyCnt_PeakValueFilter]= uiPeakValue_Temp;//当前值保留在最后一个位置
+//				for(iN=0;iN<i_byNum_PeakValueFilter;iN++)
+//				{
+//					diSum+= auiData_Filter[iN];//累加和
+//				}
+//				for(iN=1;iN<i_byNum_PeakValueFilter-1;iN++)
+//				{
+//					auiData_Filter[iN-1]= auiData_Filter[iN];//将最后一个位置留着2024.9.1.081419
+//				}
+//				uiPeakValue_Use= diSum/i_byNum_PeakValueFilter;//计算均值
+//			}
+//		}
+//
+//		rTmpVal= ABS(i_rBase- (float)uiPeakValue_Use);
+//		*i_prSignalEffectiveScope= rTmpVal;//输出滤波值2024.9.1.081350
+//	}
+//	else
+//	{
+//		;
+//	}
+//}
+//
+//void KS_CalcBaselineByData_FS_Singal(unsigned short *i_puiFSdata,//精采样数据入口地址1
+//									 short i_iTotalPoints,//精采样点数|默认按0.02系统精度是20mm宽度
+//									 unsigned char i_xIsNegPolarity,//信号极性|原始采集信号反极性，显示做了反向处理
+//									 unsigned char i_xCalibrateTwice,//二次校准基线
+//									 float* o_prBase)
+//{
+//	//定义开始start
+//	short	iN					;				//,iJ(*循环变量|*)
+//	signed int diSumVal			;				//(*累加和|*)
+//	unsigned short* puiItem1	;				//(*临时变量,用来指针操作采样数据|*)
+//	float lrTemp				;				//(*临时lreal型变量|*)
+//	float lrBaselineRef0		;				//(*隔直基线|*)
+//	float lrBaselineRef1		;				//(*隔直后二次平均的基线|*)
+//	float lrBaselineRef2		;				//(*基线重新整定|*)
+//	float alrBothSidesSumVal[2]	;				//(*两边的分别累计值|1为上,2为下|*)
+//	short aiBothSidesTotalPts[2];				//(*两边的统计点数|1为上,2为下|*)
+//	//定义变量结束stop
+//
+//	//	(*recheck@2018.12.1.113055|
+//	//	* han.dp|精采样数据获取基线|*)
+//	if ((i_iTotalPoints>=250) && (i_iTotalPoints<=4000)) //(*波门在5mm~80mm之间|*)
+//	{
+//		//(*隔直方法|所有数据均值|*)
+//		puiItem1= i_puiFSdata;
+//		diSumVal= 0;
+//
+//		for (iN=0; iN<i_iTotalPoints; iN++)
+//		{
+//			diSumVal= diSumVal+(*puiItem1);
+//			puiItem1= puiItem1+1;
+//		}
+//		lrBaselineRef0= (float)diSumVal/(float)(i_iTotalPoints);
+//		//		(*用均值作为第1道阀值|
+//		//		* 然后把超过(含)阀值的点和低于阀值的点|
+//		//		* 个数和累计和分别记录下来|
+//		//		* 特别注意: 原始信号和显示的信号是相反的||*)
+//		// 		T1初始化
+//		//		(*记录超过(含)阀值的部分|*)
+//		aiBothSidesTotalPts[0]= 0;
+//		alrBothSidesSumVal[0]= 0;
+//
+//		//(*记录低过阀值的部分|*)
+//		aiBothSidesTotalPts[1]= 0;
+//		alrBothSidesSumVal[1]= 0;
+//
+//		//(*开始操作|*)
+//		puiItem1= i_puiFSdata;
+//		for (iN=0; iN<i_iTotalPoints; iN++)
+//		{
+//			//T1处理
+//			lrTemp= (float)(*puiItem1);
+//			if (lrTemp>=lrBaselineRef0)
+//			{
+//				//(*记录超过(含)阀值的点|*)
+//				aiBothSidesTotalPts[0]= aiBothSidesTotalPts[0]+1;
+//				alrBothSidesSumVal[0]= alrBothSidesSumVal[0]+lrTemp;
+//			}
+//			else
+//			{
+//				//(*记录低过阀值的点|*)
+//				aiBothSidesTotalPts[1]= aiBothSidesTotalPts[1]+1;
+//				alrBothSidesSumVal[1]= alrBothSidesSumVal[1]+lrTemp;
+//			}
+//			puiItem1= puiItem1+1;
+//		}
+//		//T1处理
+//		if (i_xIsNegPolarity==1)
+//		{
+//			//(*反极性|*)
+//			lrBaselineRef1= alrBothSidesSumVal[0]/aiBothSidesTotalPts[0];
+//		}
+//		else
+//		{
+//			//(*正极性|*)
+//			lrBaselineRef1= alrBothSidesSumVal[1]/aiBothSidesTotalPts[1];
+//		}
+//		if (i_xCalibrateTwice==1)
+//		{
+//			//			(*需要再校准一次基线|
+//			//			* 避免lrBaselineRef0和lrBaselineRef1都不理想
+//			//			* 就再折中一下||*)
+//			//T1
+//			aiBothSidesTotalPts[0]= 0;
+//			alrBothSidesSumVal[0]= 0;
+//
+//			aiBothSidesTotalPts[1]= 0;
+//			alrBothSidesSumVal[1]= 0;
+//
+//			puiItem1= i_puiFSdata;
+//			//////>>>>>>>>>>>>>>>>>>>>>>.T1
+//
+//			if (lrBaselineRef1>lrBaselineRef0)
+//			{
+//				//(*第一次均值后的单边数据再次均值后变高了|*)
+//				for (iN=0; iN<i_iTotalPoints; iN++)
+//				{
+//					lrTemp= (float)(*puiItem1);
+//
+//					if (lrTemp>=lrBaselineRef1)
+//					{
+//						//(*超过lrBaselineRef1的部分||*)
+//						aiBothSidesTotalPts[0]= aiBothSidesTotalPts[0]+1;
+//						alrBothSidesSumVal[0]= alrBothSidesSumVal[0]+lrTemp;
+//					}
+//					else if (lrTemp>lrBaselineRef0)
+//					{
+//						//(*介于lrBaselineRef1和lrBaselineRef0之间||*)
+//						aiBothSidesTotalPts[1]= aiBothSidesTotalPts[1]+1;
+//						alrBothSidesSumVal[1]= alrBothSidesSumVal[1]+lrTemp;
+//					}
+//					puiItem1= puiItem1+1;
+//				}
+//
+//				if (aiBothSidesTotalPts[0]>=aiBothSidesTotalPts[1])
+//				{
+//					lrBaselineRef2= alrBothSidesSumVal[0]/aiBothSidesTotalPts[0];
+//				}
+//				else
+//				{
+//					lrBaselineRef2= alrBothSidesSumVal[1]/aiBothSidesTotalPts[1];
+//				}
+//			}
+//			else if (lrBaselineRef1<lrBaselineRef0)
+//			{
+//				//(*第一次均值后的单边数据再次均值后变低了|*)
+//				for (iN=0; iN<i_iTotalPoints; iN++)
+//				{
+//					lrTemp= (float)(*puiItem1);
+//
+//					if (lrTemp<lrBaselineRef1)
+//					{
+//						//(*低过lrBaselineRef1的部分||*)
+//						aiBothSidesTotalPts[1]= aiBothSidesTotalPts[1]+1;
+//						alrBothSidesSumVal[1]= alrBothSidesSumVal[1]+lrTemp;
+//					}
+//					else if (lrTemp<lrBaselineRef0)
+//					{
+//						//(*介于lrBaselineRef1和lrBaselineRef0之间的部分||*)
+//						aiBothSidesTotalPts[0]= aiBothSidesTotalPts[0]+1;
+//						alrBothSidesSumVal[0]= alrBothSidesSumVal[0]+lrTemp;
+//					}
+//					puiItem1= puiItem1+1;
+//				}
+//				//(*取点数多的区域有效||*)
+//				if (aiBothSidesTotalPts[0]>=aiBothSidesTotalPts[1])
+//				{
+//					lrBaselineRef2= alrBothSidesSumVal[0]/aiBothSidesTotalPts[0];
+//				}
+//				else
+//				{
+//					lrBaselineRef2= alrBothSidesSumVal[1]/aiBothSidesTotalPts[1];
+//				}
+//			}
+//			else
+//			{
+//				//(*竟然一样?那就随便谁都可以啦||*)
+//				lrBaselineRef2= lrBaselineRef1;
+//			}
+//			*o_prBase= lrBaselineRef2;
+//		}
+//		else
+//		{
+//			//(*不做二次校正||*)
+//			*o_prBase= lrBaselineRef1;
+//		}
+//	}
+//}
+//
+////获取阀值位置,输出阀值位置和标志
+//void KSGetThresholdPos(float baseline,//基线值@波形是原始波形,该值是大值
+//						unsigned char signalpolarityisnegative,//正反信号标志@有效了为反信号，正极性
+//						float scopelevelratio,//阀值比例,默认 0.5 0.25 0.75
+//						short fsdata_num,//精采样点数
+//						unsigned short afsdata_filter[],//auiFSData_Filtered[1500],//滤波后的数据指针
+//						float signaleffectivescope,//有效幅值@该值是小值
+//						short peakvaluepos,//峰值位置
+//						float smallsignalval,//小信号的值
+//						//输出
+//						unsigned char* pfindit_frontedge,//找到了前沿标志
+//						float* ppos_frontedge,//前沿位置
+//						unsigned char* pfindit_backedge,//找到后沿标志
+//						float* ppos_backedge)//后沿位置
+//{
+//	float rtmpval=0;//中间变量
+//	float rThreshold=0;//阈值
+//	float radditioncx;
+//	unsigned char xcanparsingthresholdlevel=0;//小信号处理的标志
+//	short point=0;
+//	unsigned short fsdata=0,prevfsdata=0,nextfsdata=0;
+//	unsigned char xReqCommit;
+//	if(signalpolarityisnegative)//反信号@和原始波形相同方向
+//	{
+//		rtmpval= baseline- signaleffectivescope * scopelevelratio;//计算阀值位置
+//	}
+//	else//正信号@和原始波形不同方向。
+//	{
+//		rtmpval= baseline+ signaleffectivescope * scopelevelratio;//计算阀值位置
+//	}
+//	rThreshold= rtmpval;
+//
+//	//小信号处理-信号太小就不处理了
+//	if(signaleffectivescope<smallsignalval)
+//	{
+//		xcanparsingthresholdlevel= 0;//不计算阀值位置使能
+//	}
+//	else
+//	{
+//		xcanparsingthresholdlevel= 1;//计算阀值位置使能
+//	}
+//
+//	*pfindit_frontedge = 0;//输出找到前沿标志
+//	*ppos_frontedge= 0;//输出前沿位置
+//	*pfindit_backedge = 0;//输出找到前沿标志
+//	*ppos_backedge= 0;//输出前沿位置
+//
+//	if(xcanparsingthresholdlevel)
+//	{
+//		//寻找前沿
+//		for(point=peakvaluepos;point>=1;point--)
+//		{
+//			fsdata = afsdata_filter[point];//获取精采样数据
+//			prevfsdata = afsdata_filter[point-1];//获取上一个精采样数据
+//			xReqCommit= 0;
+//			if(signalpolarityisnegative)//反信号
+//			{
+//				if(fsdata<= rThreshold && prevfsdata>rThreshold)//找到拐点了
+//				{
+//					xReqCommit=1;//找到一个前沿交点
+//				}
+//			}
+//			else//正信号
+//			{
+//				if(fsdata>= rThreshold && prevfsdata< rThreshold)//找到拐点了
+//				{
+//					xReqCommit= 1;//找到一个前沿交点
+//				}
+//			}
+//			if(xReqCommit)
+//			{
+//				radditioncx=KS_RatioL_ByThresholdCutting(
+//					rThreshold,
+//					prevfsdata,
+//					fsdata);//计算跨点的%
+//
+//				*pfindit_frontedge = xReqCommit;//输出找到前沿标志
+//				*ppos_frontedge= (point-1)+ radditioncx;//输出前沿位置
+//			}
+//		}
+//		//该统计后沿了
+//		for(point= peakvaluepos;point<fsdata_num-1;point++)
+//		{
+//			fsdata = afsdata_filter[point];//获取精采样数据
+//			nextfsdata = afsdata_filter[point+1];//获取下一个精采样数据
+//			xReqCommit=0;
+//			if(signalpolarityisnegative)//反信号
+//			{
+//				if(fsdata<= rThreshold && nextfsdata> rThreshold)
+//				{
+//					xReqCommit= 1;
+//				}
+//			}
+//			else//正信号
+//			{
+//				if(fsdata>= rThreshold && nextfsdata<rThreshold)
+//				{
+//					xReqCommit= 1;
+//				}
+//			}
+//			if(xReqCommit)
+//			{
+//				radditioncx=KS_RatioL_ByThresholdCutting(
+//					rThreshold,
+//					fsdata,
+//					nextfsdata);//计算跨点的%
+//
+//				*pfindit_backedge = xReqCommit;//输出找到前沿标志
+//				*ppos_backedge= point+ radditioncx;//输出前沿位置
+//			}
+//		}
+//	}
+//	else
+//	{//不计算的时候清除
+//		;
+//	}
+//}
+//
+////精采样数据滤波器@2024.8.26
+//void KSFsDataFilter(float baseline,//基线值@波形是原始波形
+//				char signalpolarityisnegative,//正反信号标志@有效了为反信号，正极性@正常是1
+//				unsigned char filterpoints,//滤波次数
+//				unsigned short afsdata[],//精采样数据数组
+//				short fsdata_num,//精采样点数
+//				//输出
+//				//unsigned short afsdata_filter[1500],//滤波后的数据
+//				unsigned short afsdata_filter[],//滤波后的数据
+//				float* psignaleffectivescope,//有效幅值
+//				short* ppeakvaluepos)//峰值位置
+//{
+//	//定义
+//	float rsumtotal=0;
+//	unsigned short point=0,value_max=0,value_max_pos,value_min=65535,value_min_pos;
+//	unsigned short fsdata,fsdata_tmp;
+//	short m;//循环索引
+//
+//	//实现
+//	if(filterpoints==0) filterpoints=1;//最小一次滤波
+//	for(point=0;point<fsdata_num;point++)
+//	{	//获取精采样值
+//		fsdata = afsdata[point];//获取输入的精采样数据
+//		//计算平均
+//		if(point>=filterpoints-1)
+//		{
+//			rsumtotal=0;
+//			for(m = point;m >=point+1-filterpoints;m--)
+//			{
+//				fsdata_tmp = afsdata[m];
+//				rsumtotal += fsdata_tmp;//累计采样值
+//			}
+//			afsdata_filter[point] = rsumtotal/filterpoints;
+//		}
+//		else//达不到滤波条件，直接记录原始值
+//		{
+//			afsdata_filter[point]= fsdata;
+//		}
+//
+//		//更新最大值、最小值
+//		if(afsdata_filter[point]>value_max)
+//		{
+//			value_max= afsdata_filter[point];
+//			value_max_pos = point;
+//		}
+//		if(afsdata_filter[point]<value_min)
+//		{
+//			value_min = afsdata_filter[point];
+//			value_min_pos = point;
+//		}
+//	}
+//
+//	//滤波完成-最大最小值统计完成，更新有效赋值
+//	if(signalpolarityisnegative)//反信号@正常波形
+//		//正极性峰值位置就是最小值位置
+//	{
+//		*ppeakvaluepos= value_min_pos;
+//		*psignaleffectivescope= baseline - value_min;
+//	}
+//	else//正信号,反极性峰值位置是最大值位置
+//	{
+//		*ppeakvaluepos= value_max_pos;
+//		*psignaleffectivescope= value_max - baseline;
+//	}
+//}
+
+//平均处理@int16_t
+float KS_Average(int8_t xAverageEn,//平均使能
+		int16_t idata,//数据
+		uint8_t byAverageNum,//平均次数
+		int16_t aidatabuff[MAX_AVERAGE_NUM],//缓存的数组
+		uint8_t* pbyCurIndex,//当前的索引@从0开始
+		uint8_t* pxDataInitDne)//平均的数据初始化完成
+{
+	uint8_t byAverageNumUse = 0u;
+	int8_t siIndexEnd = 0u;//循环结束的索引位置
+	uint8_t byCurIndex = *pbyCurIndex;//从0开始
+	uint8_t xDataInitDne = *pxDataInitDne;//数据初始化完成标志
+	int16_t i = 0u,j = 0u;
+	float fSum = 0.0f,fResult = 0.0f;
+
+
+	if(!xAverageEn)//平均未使能@复位数据
+	{
+		if(xDataInitDne || byCurIndex !=0)
+		{
+			for(int16_t i = 0;i < MAX_AVERAGE_NUM;i++)
+				aidatabuff[i] = 0;
+
+			byCurIndex = 0;
+			xDataInitDne = FALSE;
+		}
+	}
+	else//平均使能
+	{
+		//平均次数合法性处理
+		byAverageNumUse = byAverageNum;
+		if(byAverageNumUse == 0)
+			byAverageNumUse = 1;
+		else if(byAverageNumUse > MAX_AVERAGE_NUM)
+			byAverageNumUse = MAX_AVERAGE_NUM;
+		else
+			;
+
+		if(!xDataInitDne)//数据初始化未完成
+		{
+			if(byCurIndex+1 >= byAverageNumUse)//数据足够了@置位初始化完成标志
+				xDataInitDne = TRUE;
+
+			if(!xDataInitDne)//未初始化成功，修改平均次数值
+				byAverageNumUse = byCurIndex + 1;//byCurIndex 从0开始
+		}
+		else//数据初始化完成
+		{
+			;
+		}
+
+		//索引处理
+		aidatabuff[byCurIndex] = idata;//数据存储到数组中@最新的数据
+		//计算累计值
+		siIndexEnd = (int8_t)(byCurIndex + 1) - (int8_t)byAverageNumUse;
+		for(i = byCurIndex;i >= siIndexEnd;i--)//siIndexEnd 有可能是负值
+		{
+			j = i;//i 有可能是负值@不能修改i,写入到临时变量,修改临时变量
+			if(j < 0 ) j += MAX_AVERAGE_NUM;//拉回到正常范围
+			fSum += aidatabuff[j];//计算累计值
+		}
+		fResult = fSum / byAverageNumUse;
+
+		byCurIndex++;
+		if(byCurIndex >= MAX_AVERAGE_NUM)
+			byCurIndex = 0;
+	}//平均使能
+
+
+	*pbyCurIndex = byCurIndex;//更新
+	*pxDataInitDne = xDataInitDne;
+	return fResult;
+}
