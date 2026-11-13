@@ -366,13 +366,11 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 				//DWT探针包住调用测每圈耗时:周期数×10ns=毫秒数(如1460000→14.6ms),
 				//首次进入使能DEMCR.TRCENA+CYCCNTENA后自由运行,核心不停机|2026.11.12
 				{
-					static BYTE xDwtEn = 0;
 					DWORD dwCyc0;
-					if (!xDwtEn)
+					if (!(KS_DWT_CTRL & 1UL))	/* 自检自愈:未使能(含调试器复位DWT后)重新使能,免去static标志|2026.11.12 */
 					{
 						KS_DEMCR |= (1UL << 24);	/* DEMCR.TRCENA=1:使能DWT */
 						KS_DWT_CTRL |= 1UL;			/* DWT_CTRL.CYCCNTENA=1:计数器启动 */
-						xDwtEn = 1;
 					}
 					dwCyc0 = KS_DWT_CYCCNT;
 					KS_ConfErr_Process(i_pstStAxisParam, &stStCalcParam_In, &stStCalcParam_Out);
