@@ -1,0 +1,8 @@
+../Kesai_Visu/KS_FB_VISU.c:117:6:GetBit	1
+../Kesai_Visu/KS_FB_VISU.c:123:6:SetBit	3
+../Kesai_Visu/KS_FB_VISU.c:137:6:GetBit_DWORD	1
+../Kesai_Visu/KS_FB_VISU.c:143:7:SetBit_DWORD	3
+../Kesai_Visu/KS_FB_VISU.c:158:6:CRC_Compute	3
+../Kesai_Visu/KS_FB_VISU.c:467:6:KS_FB_VISU	125
+../Kesai_Visu/KS_FB_VISU.c:1948:6:KS_FB_VISU_IF	118
+../Kesai_Visu/KS_FB_VISU.c:2842:6:ks_getmodbuscommdata	13

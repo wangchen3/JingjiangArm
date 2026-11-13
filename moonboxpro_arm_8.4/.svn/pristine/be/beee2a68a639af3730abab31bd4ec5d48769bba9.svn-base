@@ -1,0 +1,39 @@
+################################################################################
+# Automatically-generated file. Do not edit!
+# Toolchain: GNU Tools for STM32 (13.3.rel1)
+################################################################################
+
+# Add inputs and outputs from these tool invocations to the build variables 
+C_SRCS += \
+../Kesai_Process/AutoFindTaps.c \
+../Kesai_Process/KS_FB_ProSample.c \
+../Kesai_Process/calcbase.c \
+../Kesai_Process/calcerr.c \
+../Kesai_Process/ks_somefunc.c 
+
+OBJS += \
+./Kesai_Process/AutoFindTaps.o \
+./Kesai_Process/KS_FB_ProSample.o \
+./Kesai_Process/calcbase.o \
+./Kesai_Process/calcerr.o \
+./Kesai_Process/ks_somefunc.o 
+
+C_DEPS += \
+./Kesai_Process/AutoFindTaps.d \
+./Kesai_Process/KS_FB_ProSample.d \
+./Kesai_Process/calcbase.d \
+./Kesai_Process/calcerr.d \
+./Kesai_Process/ks_somefunc.d 
+
+
+# Each subdirectory must supply rules for building sources it contributes
+Kesai_Process/%.o Kesai_Process/%.su Kesai_Process/%.cyclo: ../Kesai_Process/%.c Kesai_Process/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m4 -std=gnu11 -DUSE_HAL_DRIVER -DSTM32F412Zx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Kesai_Comm" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/RingNetDll" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Core" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Kesai_Process" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Kesai_Visu" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/UPdate" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers/CMSIS" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers/CMSIS/Include" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers/CMSIS/Device/ST/STM32F4xx/Include" -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Modbus485_Master" -Os -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+clean: clean-Kesai_Process
+
+clean-Kesai_Process:
+	-$(RM) ./Kesai_Process/AutoFindTaps.cyclo ./Kesai_Process/AutoFindTaps.d ./Kesai_Process/AutoFindTaps.o ./Kesai_Process/AutoFindTaps.su ./Kesai_Process/KS_FB_ProSample.cyclo ./Kesai_Process/KS_FB_ProSample.d ./Kesai_Process/KS_FB_ProSample.o ./Kesai_Process/KS_FB_ProSample.su ./Kesai_Process/calcbase.cyclo ./Kesai_Process/calcbase.d ./Kesai_Process/calcbase.o ./Kesai_Process/calcbase.su ./Kesai_Process/calcerr.cyclo ./Kesai_Process/calcerr.d ./Kesai_Process/calcerr.o ./Kesai_Process/calcerr.su ./Kesai_Process/ks_somefunc.cyclo ./Kesai_Process/ks_somefunc.d ./Kesai_Process/ks_somefunc.o ./Kesai_Process/ks_somefunc.su
+
+.PHONY: clean-Kesai_Process
+

@@ -1,0 +1,9 @@
+../RingNetDll/StFileOp.c:15:6:CLPBYTEListCreate	1
+../RingNetDll/StFileOp.c:22:7:CGetList	6
+../RingNetDll/StFileOp.c:60:7:CClearPData	1
+../RingNetDll/StFileOp.c:67:7:CAddParam	1
+../RingNetDll/StFileOp.c:79:7:CSetStFunction	1
+../RingNetDll/StFileOp.c:85:6:CLPBYTEListDelete	1
+../RingNetDll/StFileOp.c:93:7:StFnProcess	6
+../RingNetDll/StFileOp.c:126:7:Fn_Real_GetDllVersion	4
+../RingNetDll/StFileOp.c:159:7:Fn_Read_GeneralKesaiCmd	3

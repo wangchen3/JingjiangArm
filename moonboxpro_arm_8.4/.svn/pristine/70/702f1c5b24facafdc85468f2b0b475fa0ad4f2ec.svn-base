@@ -1,0 +1,10 @@
+Kesai_Process/calcbase.o: ../Kesai_Process/calcbase.c \
+ ../Kesai_Process/calcbase.h ../Core/Inc/base.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM/sys.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM/led.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM/sys.h
+../Kesai_Process/calcbase.h:
+../Core/Inc/base.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM/sys.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM/led.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM/sys.h:

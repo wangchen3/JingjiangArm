@@ -1,0 +1,344 @@
+﻿(*@CES
+Name=KS_RstUnitParam_UnSave
+Type=FunctionBlock
+TypeGuid=6f9dac99-8de1-4efc-8465-68ac443b7d08
+Guid=a00d5254-22c8-4cfc-acd1-400359096c14
+HasDeclaration=True
+HasImplementation=True
+*)
+{DECLARATION}
+FUNCTION KS_RstUnitParam_UnSave : INT
+VAR_INPUT
+	i_pastStUnitParam_UnSave: POINTER TO ARRAY [1..MAX_UNIT_NUM] OF StUnitParam_UnSave;
+	i_pastStUnitParam_UnSave_RSV: POINTER TO ARRAY [1..MAX_UNIT_NUM] OF StRSV_UnitParam_UnSave;	
+END_VAR
+VAR
+	iN: int;
+	iUnit: INT;
+	iResult: INT;	
+END_VAR
+
+{IMPLEMENTATION}
+iResult:=0;
+
+IF i_pastStUnitParam_UnSave<>0 AND i_pastStUnitParam_UnSave_RSV<>0 THEN
+	FOR iUnit:=1 TO MAX_UNIT_NUM BY 1 DO
+		SysMemSet(ADR(i_pastStUnitParam_UnSave_RSV^[iUnit].abyRSV_UnitParam_UnSave),
+					0, 
+					SIZEOF(i_pastStUnitParam_UnSave_RSV^[iUnit].abyRSV_UnitParam_UnSave));
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_BottomRoller						:= FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xSamRev_BottomRoller                       := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_PrnRoller                          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xSamRev_PrnRoller                          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_NetRoller                          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_NetRoller_Pressure_M               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_NetRoller_Pressure_G               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_PrnRoller_Pressure_M               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_PrnRoller_Pressure_G               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_StrRoller_Pressure_M               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_StrRoller_Pressure_G               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_RollerDn_BottomRoller                := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_RollerDn_PrnRoller                   := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_RollerDn_NetRoller                   := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xValid_BottomRoller                        := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_BottomRoller                          := -1;
+		i_pastStUnitParam_UnSave^[iUnit].xStationOnline_BottomRoller                := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].rAxisVel_BottomRoller                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xValid_PrnRoller                           := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_PrnRoller                             := -1;
+		i_pastStUnitParam_UnSave^[iUnit].xStationOnline_PrnRoller                   := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].rAxisVel_PrnRoller                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xValid_NetRoller                           := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_NetRoller                             := -1;
+		i_pastStUnitParam_UnSave^[iUnit].xStationOnline_NetRoller                   := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].rAxisVel_NetRoller                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_PrnRoller_Pressure_M                  := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_PrnRoller_Pressure_G                  := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_PrnRoller_Pressure_2in1               := -1;
+		i_pastStUnitParam_UnSave^[iUnit].wCtlmod_NetRoller_Pressure                 := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_NetRoller_Pressure_M                  := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_NetRoller_Pressure_G                  := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_NetRoller_Pressure_2in1               := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_Pressure_4in1                         := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_StrRoller_Pressure_M                  := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_StrRoller_Pressure_G                  := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_StrRoller_Pressure_2in1               := -1;
+		i_pastStUnitParam_UnSave^[iUnit].iAxisIdx_PrnRoller_Pressure_M              := 1;
+		i_pastStUnitParam_UnSave^[iUnit].iAxisIdx_PrnRoller_Pressure_G              := 2;
+		i_pastStUnitParam_UnSave^[iUnit].iAxisIdx_NetRoller_Pressure_M              := 3;
+		i_pastStUnitParam_UnSave^[iUnit].iAxisIdx_NetRoller_Pressure_G              := 4;
+		i_pastStUnitParam_UnSave^[iUnit].iAxisIdx_StrRoller_Pressure_M              := 5;
+		i_pastStUnitParam_UnSave^[iUnit].iAxisIdx_StrRoller_Pressure_G              := 6;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_dn_PrnRoller_Pressure_M_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_dn_PrnRoller_Pressure_G_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_up_PrnRoller_Pressure_M_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_up_PrnRoller_Pressure_G_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_load_unload_PrnRoller_Pressure_M_Hmi  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_load_unload_PrnRoller_Pressure_G_Hmi  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_dn_NetRoller_Pressure_M_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_dn_NetRoller_Pressure_G_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_up_NetRoller_Pressure_M_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_press_up_NetRoller_Pressure_G_Hmi     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_load_unload_NetRoller_Pressure_M_Hmi  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_load_unload_NetRoller_Pressure_G_Hmi  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_PrnRoller_Pressure_M                  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_PrnRoller_Pressure_G                  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_NetRoller_Pressure_M                  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_NetRoller_Pressure_G                  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rFrontSurfacePos_PrnRoller_Pressure_M      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rFrontSurfacePos_PrnRoller_Pressure_G      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rRearSurfacePos_PrnRoller_Pressure_M       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rRearSurfacePos_PrnRoller_Pressure_G       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rFrontSurfacePos_NetRoller_Pressure_M      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rFrontSurfacePos_NetRoller_Pressure_G      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rRearSurfacePos_NetRoller_Pressure_M       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rRearSurfacePos_NetRoller_Pressure_G       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xReConfirmPos0_AbsEnc                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].byTarPos_Roller                            := 0;
+		i_pastStUnitParam_UnSave^[iUnit].byCurPos_Roller                            := 0;
+		i_pastStUnitParam_UnSave^[iUnit].byInPos_Roller                             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_StrRoller_Pressure_M                  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPos_StrRoller_Pressure_G                  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xMotEn_PrnRoller_Pressure                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotEn_NetRoller_Pressure                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotStop_PrnRoller_Pressure                := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotStop_NetRoller_Pressure                := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetRollSyncMoveByPrnRoll_Pressure         := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].rMoveDis_PrnRoller_Pressure_M              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rMoveDis_PrnRoller_Pressure_G              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rMoveDis_NetRoller_Pressure_M              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rMoveDis_NetRoller_Pressure_G              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDevLarge_PrnRoller_Pressure            := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDevLarge_NetRoller_Pressure            := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xTooClose_PrnRollerAndNetRoller_M          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xTooClose_PrnRollerAndNetRoller_G          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xSyncMoving_PrnRollAndNetRoll              := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].byCoordinate                               := 1;
+		i_pastStUnitParam_UnSave^[iUnit].rCoordinateInter_PrnRollerAndNetRoller     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAxisAlrSts_NetRoller_Pressure_M          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlrCode_NetRoller_Pressure_M             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAxisAlrSts_NetRoller_Pressure_G          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlrCode_NetRoller_Pressure_G             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAxisAlrSts_PrnRoller_Pressure_M          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlrCode_PrnRoller_Pressure_M             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAxisAlrSts_PrnRoller_Pressure_G          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlrCode_PrnRoller_Pressure_G             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].byStsRapidAdjust                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].adwPressureMotor_Move[1]                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].adwPressureMotor_Move[2]                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].adwPressureMotor_Move[3]                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iSampleCfgParam_ctl                        := 7;
+		i_pastStUnitParam_UnSave^[iUnit].byColorIdCurrent                           := 0;
+//		i_pastStUnitParam_UnSave^[iUnit].byFollowColorId                            := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iRoundSampleDataSa                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iRoundSampleViewDensity                    := 4;
+		i_pastStUnitParam_UnSave^[iUnit].byArcSts                                   := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSts_TowardsTar_H                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iPos_TowardsTar_H                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwSpecialRequest                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwExtendedMask                             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rOMKPos0_                                  := 0;
+	(* 色组调整相关 *)
+	FOR iN:=1 TO 2 BY 1 DO
+		i_pastStUnitParam_UnSave^[iUnit].axCurCycleAdjustVal_Auto_done_vh[iN]		:= FALSE;//	: ARRAY [1..2] OF BOOL;(* 本周期的自动套色调整消耗完成/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrCurCycleAdjustVal_Auto_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 自动调整/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrTotalAdjustVal_Auto_vh[iN]				:= 0;//	: ARRAY [1..2] OF LREAL;(* 自动调整仓库/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrExecutedAdjVal_Auto_vh[iN]				:= 0;//	: ARRAY [1..2] OF LREAL;(* 已经执行的自动调整量/[1]纵向/[2]横向 *)
+												
+		i_pastStUnitParam_UnSave^[iUnit].axCurCycleAdjustVal_Rapid_done_vh[iN]		:= FALSE;//	: ARRAY [1..2] OF BOOL;(* 本周期的快速对版调整消耗完成/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrCurCycleAdjustVal_Rapid_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 快速对版调整/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrTotalAdjustVal_Rapid_vh[iN]				:= 0;//	: ARRAY [1..2] OF LREAL;(* 快速对版仓库/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrExecutedAdjVal_Rapid_vh[iN]				:= 0;//	: ARRAY [1..2] OF LREAL;(* 已经执行的快速调整量/[1]纵向/[2]横向 *)
+											
+		i_pastStUnitParam_UnSave^[iUnit].axCurCycleAdjustVal_ManuCoarse_done_vh[iN]	:= FALSE;//	: ARRAY [1..2] OF BOOL;(* 本周期的手动粗调消耗完成/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrCurCycleAdjustVal_ManuCoarse_vh[iN]		:= 0;//	: ARRAY [1..2] OF LREAL;(* 手动粗调/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrTotalAdjustVal_ManuCoarse_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 手动粗调仓库/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrExecutedAdjVal_ManuCoarse_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 已经执行的手动粗调量/[1]纵向/[2]横向 *)
+											
+		i_pastStUnitParam_UnSave^[iUnit].axCurCycleAdjustVal_ManuFine_done_vh[iN]	:= FALSE;//	: ARRAY [1..2] OF BOOL;(* 本周期的手动细调消耗完成/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrCurCycleAdjustVal_ManuFine_vh[iN]		:= 0;//	: ARRAY [1..2] OF LREAL;(* 手动细调/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrTotalAdjustVal_ManuFine_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 手动细调仓库/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrExecutedAdjVal_ManuFine_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 已经执行的手动细调量/[1]纵向/[2]横向 *)
+								
+		i_pastStUnitParam_UnSave^[iUnit].axCurCycleAdjustVal_Coupling_done_vh[iN]	:= FALSE;//	: ARRAY [1..2] OF BOOL;(* 本周期的耦合消耗完成/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrCurCycleAdjustVal_Coupling_vh[iN]		:= 0;//	: ARRAY [1..2] OF LREAL;(* 耦合量/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrTotalAdjustVal_Coupling_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 耦合量仓库/[1]纵向/[2]横向 *)
+		i_pastStUnitParam_UnSave^[iUnit].alrExecutedAdjVal_Coupling_vh[iN]			:= 0;//	: ARRAY [1..2] OF LREAL;(* 已经执行的耦合量/[1]纵向/[2]横向 *)
+	END_FOR
+//		i_pastStUnitParam_UnSave^[iUnit].tMovingTimeSa                              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xAutoSts_Roller_Pressure                   := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMoveEnable_Motor                          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].byHandWheelSts                             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rCurrent_PrnPressure_M                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rCurrent_PrnPressure_G                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rCurrent_NetPressure_M                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rCurrent_NetPressure_G                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rCurrent_StrPressure_M                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rCurrent_StrPressure_G                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSts_HorzManuPreReg                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iPos_HorzManuPreReg                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_HorzPreRegister_ing                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_HorzPreRegister_end                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].diPreReg_RepeatVal_H                       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].diPreReg_SetupVal_H                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].lrVelocity_CoatingPrn                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].byBtn_AdjModeSwitch_CoatingPrn             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisInching                               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisInching_Net                           := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iPhase_InstallPlate                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].iPhase_RegisterOk                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xEn_Motor_PrnRoller                        := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xEn_Motor_NetRoller                        := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xEn_Motor_BottomRoller                     := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_FastAdjusting                        := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_MediumAdjusting                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_SlowAdjusting                        := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_Horz                           := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_Horz                            := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_Horz                    := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_PrnRoller                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_PrnRoller                       := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_PrnRoller               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_NetRoller                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_NetRoller                       := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_NetRoller               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_BottomRoller                   := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_BottomRoller                    := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_BottomRoller            := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_Prn_Pressure_M                 := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_Prn_Pressure_M                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_Prn_Pressure_M          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_Prn_Pressure_G                 := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_Prn_Pressure_G                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_Prn_Pressure_G          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_Net_Pressure_M                 := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_Net_Pressure_M                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_Net_Pressure_M          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_Net_Pressure_G                 := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_Net_Pressure_G                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_Net_Pressure_G          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_Str_Pressure_M                 := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_Str_Pressure_M                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_Str_Pressure_M          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_Str_Pressure_G                 := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_Str_Pressure_G                  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_Str_Pressure_G          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xNetOffline_PHOTOCELL                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAlarm_PHOTOCELL                       := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xPosDeviationAlarm_PHOTOCELL               := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Prn                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Net                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Bottom                       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Prn_M                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Prn_G                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Net_M                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Net_G                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Horz                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_PHOTOCELL                    := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Str_M                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwAlarmDetail_Str_G                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xOnline_NR_M_                              := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xOnline_NR_G_                              := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xOnline_PR_M_                              := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xOnline_PR_G_                              := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xOnline_STR_M_                             := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xOnline_STR_G_                             := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_Horiz_                                := -1;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_Horiz_                             := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xOnline_Horiz_                             := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].rErr_V                                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rErr_H                                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xValid_PhotoCell                           := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iSid_PhotoCell                             := -1;
+		i_pastStUnitParam_UnSave^[iUnit].xStationOnline_PhotoCell                   := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xMotRev_PhotoCell                          := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].rAxisVel_PhotoCell                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].byEn_Motor_Pressure_                       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].byEn_Motor_Trap_                           := 0;
+// 		i_pastStUnitParam_UnSave^[iUnit].lrLimit_Left                               := 0;
+// 		i_pastStUnitParam_UnSave^[iUnit].lrLimit_Right                              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rweigth_Prn_Bottom_Cur                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rweigth_Prn_Net_Cur                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rweigth_Net_Prn_Cur                        := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rweigth_Net_Load_Cur                       := 0;
+		i_pastStUnitParam_UnSave^[iUnit].lrPhotoCellPosLimit_M                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].lrPhotoCellPosLimit_G                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rPV_UnitTemCtl                             := 0;
+
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitExhaust_CurrRD                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitExhaust_CurrWR                     := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSTS_UnitExhaust                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].lrAxisScraperVel                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rAI0Value_16D                              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rTempValue_16D                             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rAO0Value_16D                              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rAO1Value_16D                              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rDemarcate_Read_1                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rDemarcate_Read_2                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rDemarcate_Write_1                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rDemarcate_Write_2                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].lrArc_length_PrintPoint                    := 0;
+		i_pastStUnitParam_UnSave^[iUnit].dwSlaveBtn_HMI                             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xAdjBandLen                                := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xConfirmParallelPos_Prn                    := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xConfirmParallelPos_Net                    := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xConfirmParallelPos_Str                    := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].rParallelError_Prn_MM                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rParallelError_Net_MM                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rParallelError_Str_MM                      := 0;
+		i_pastStUnitParam_UnSave^[iUnit].diPhase_Enc_InstallPlate                   := 0;
+		i_pastStUnitParam_UnSave^[iUnit].axCalidPressLimit_Max[1]                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].axCalidPressLimit_Max[2]                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].axCalidPressLimit_Max[3]                      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].wUnit_input_I                              := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wUnit_input_II                             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wUnit_input_III                            := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wUnit_output_I                             := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wUnit_output_II                            := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitInkRoller_CurrRD                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitInkRoller_CurrWR                         := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitScraper_CurrRD                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitScraper_CurrWR                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitHotWind_CurrRD                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitHotWind_CurrWR                           := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitHotWind2_CurrRD                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].rHz_UnitHotWind2_CurrWR                          := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSTS_UnitTemCtl                                  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSTS_UnitInkRoller                               := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSTS_UnitScraper                                 := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSTS_UnitHotWind                                 := 0;
+		i_pastStUnitParam_UnSave^[iUnit].wSTS_UnitHotWind_2                               := 0;
+		
+		i_pastStUnitParam_UnSave^[iUnit].rVerror_Lp										  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrValid								      := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrValid_Use_Niu							  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iArcErr_V										  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsValid_V								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsValid_H								  := FALSE;
+		
+		i_pastStUnitParam_UnSave^[iUnit].xSkipHeader									  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsAlarm_V								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsAlarm_H								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsLost_V								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsLost_H								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsFake_V								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xArcErrIsFake_H								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].xFlag_PressDn									  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iVerror_Follow1UnitByErrTrans					  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xAxisAutoPressed								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].byRapidAdjustStep								  := 0;
+		i_pastStUnitParam_UnSave^[iUnit].xRapidAdjust_ing								  := FALSE;
+		i_pastStUnitParam_UnSave^[iUnit].iRapidAdjust_TimingCnt							  := 0;
+		//新增2026.04.06.133754
+		i_pastStUnitParam_UnSave_RSV^[iUnit].xSwitch_Inching_Prn			 			 :=FALSE;
+		i_pastStUnitParam_UnSave_RSV^[iUnit].xInching_NetRoller			 				 :=FALSE;
+		i_pastStUnitParam_UnSave_RSV^[iUnit].xInching_BottomRoller			 			 :=FALSE;
+		i_pastStUnitParam_UnSave_RSV^[iUnit].xSwitch_Inching_Net			 			 :=FALSE;
+		i_pastStUnitParam_UnSave_RSV^[iUnit].xSwitch_Inching_Bottom			 			 :=FALSE;
+		i_pastStUnitParam_UnSave_RSV^[iUnit].xBtn_FromHMI_HorMove_M			 			 :=FALSE;
+		i_pastStUnitParam_UnSave_RSV^[iUnit].xBtn_FromHMI_HorMove_G			 			 :=FALSE;
+	END_FOR
+	iResult:=1;
+ELSE
+	iResult:=-1;
+END_IF

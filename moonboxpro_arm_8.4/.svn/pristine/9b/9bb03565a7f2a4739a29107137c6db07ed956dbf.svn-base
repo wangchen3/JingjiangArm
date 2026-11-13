@@ -1,0 +1,6 @@
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_fsmc.c:220:20:FSMC_NORSRAM_Init	5
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_fsmc.c:342:19:FSMC_NORSRAM_DeInit	2
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_fsmc.c:379:19:FSMC_NORSRAM_Timing_Init	2
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_fsmc.c:431:19:FSMC_NORSRAM_Extended_Timing_Init	2
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_fsmc.c:489:19:FSMC_NORSRAM_WriteOperation_Enable	1
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_fsmc.c:507:19:FSMC_NORSRAM_WriteOperation_Disable	1

@@ -1,0 +1,10 @@
+../Kesai_Comm/comm.c:55:6:KS_Led1Flick	3
+../Kesai_Comm/comm.c:76:6:KS_DigitalTubesCtl	19
+../Kesai_Comm/comm.c:120:6:KS_ShowId_DigitalTubes	11
+../Kesai_Comm/comm.c:180:7:Get_SampleParamUpda	2
+../Kesai_Comm/comm.c:194:6:KS_InitSample	1
+../Kesai_Comm/comm.c:201:7:KS_CRC	3
+../Kesai_Comm/comm.c:264:6:KS_CfgAxisSampleParam	22
+../Kesai_Comm/comm.c:465:6:KS_CfgAxisSampleParam_New	13
+../Kesai_Comm/comm.c:584:7:KS_FB_SyncWithServer	187
+../Kesai_Comm/comm.c:2198:7:KS_FB_SyncWithServer_Deputy	134

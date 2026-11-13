@@ -1,0 +1,2 @@
+SYSTEM/key.o: ../SYSTEM/key.c ../SYSTEM/key.h
+../SYSTEM/key.h:

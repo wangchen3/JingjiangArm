@@ -1,0 +1,27 @@
+################################################################################
+# Automatically-generated file. Do not edit!
+# Toolchain: GNU Tools for STM32 (12.3.rel1)
+################################################################################
+
+# Add inputs and outputs from these tool invocations to the build variables 
+C_SRCS += \
+../UESR/main.c 
+
+OBJS += \
+./UESR/main.o 
+
+C_DEPS += \
+./UESR/main.d 
+
+
+# Each subdirectory must supply rules for building sources it contributes
+UESR/%.o UESR/%.su UESR/%.cyclo: ../UESR/%.c UESR/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F412Zx -DSTM32F40_41xxx -DUSE_STDPERIPH_DRIVER -DDEBUG_ENABLE_SEMIHOST -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Include -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Kesai_Comm" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/RingNetDll" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/SYSTEM" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Core" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Kesai_Process" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Kesai_Visu" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/UPdate" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Drivers/CMSIS" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Drivers/CMSIS/Include" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Drivers" -I"D:/STM32IDM/Slave_V10_2024.7.29.104110/Drivers/CMSIS/Device/ST/STM32F4xx/Include" -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+clean: clean-UESR
+
+clean-UESR:
+	-$(RM) ./UESR/main.cyclo ./UESR/main.d ./UESR/main.o ./UESR/main.su
+
+.PHONY: clean-UESR
+

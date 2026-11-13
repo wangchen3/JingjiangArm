@@ -1,0 +1,6 @@
+Kesai_Process/KS_RsMorphFilter.o: ../Kesai_Process/KS_RsMorphFilter.c \
+ ../Kesai_Process/KS_RsMorphFilter.h ../Core/Inc/base.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/SYSTEM/sys.h
+../Kesai_Process/KS_RsMorphFilter.h:
+../Core/Inc/base.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/SYSTEM/sys.h:

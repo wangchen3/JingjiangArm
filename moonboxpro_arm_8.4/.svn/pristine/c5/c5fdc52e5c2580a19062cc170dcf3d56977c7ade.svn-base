@@ -1,0 +1,4 @@
+../Kesai_Process/calcbase.c:13:5:KS_AutoFindGate	18
+../Kesai_Process/calcbase.c:143:7:KS_CalcBaselineByData_RS	39
+../Kesai_Process/calcbase.c:404:7:KS_CalcBaselineByData_FS	29
+../Kesai_Process/calcbase.c:694:7:KS_RatioL_ByThresholdCutting	6

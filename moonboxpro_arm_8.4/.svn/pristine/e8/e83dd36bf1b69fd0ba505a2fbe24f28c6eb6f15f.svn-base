@@ -1,0 +1,27 @@
+################################################################################
+# Automatically-generated file. Do not edit!
+# Toolchain: GNU Tools for STM32 (13.3.rel1)
+################################################################################
+
+# Add inputs and outputs from these tool invocations to the build variables 
+C_SRCS += \
+../Modbus485_Master/modbus485.c 
+
+OBJS += \
+./Modbus485_Master/modbus485.o 
+
+C_DEPS += \
+./Modbus485_Master/modbus485.d 
+
+
+# Each subdirectory must supply rules for building sources it contributes
+Modbus485_Master/%.o Modbus485_Master/%.su Modbus485_Master/%.cyclo: ../Modbus485_Master/%.c Modbus485_Master/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F412Zx -DSTM32F40_41xxx -DUSE_STDPERIPH_DRIVER -DDEBUG_ENABLE_SEMIHOST -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_Comm" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/SYSTEM" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Core" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_Process" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_Visu" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/UPdate" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers/CMSIS" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers/CMSIS/Include" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers/CMSIS/Device/ST/STM32F4xx/Include" -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Modbus485_Master" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_KSCR" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_calcArcErr" -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+clean: clean-Modbus485_Master
+
+clean-Modbus485_Master:
+	-$(RM) ./Modbus485_Master/modbus485.cyclo ./Modbus485_Master/modbus485.d ./Modbus485_Master/modbus485.o ./Modbus485_Master/modbus485.su
+
+.PHONY: clean-Modbus485_Master
+

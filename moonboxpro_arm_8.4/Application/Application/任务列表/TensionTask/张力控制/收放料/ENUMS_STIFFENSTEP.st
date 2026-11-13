@@ -1,0 +1,19 @@
+﻿(*@CES
+Name=ENUMS_STIFFENSTEP
+Type=Gvl
+TypeGuid=2db5746d-d284-4425-9f7f-2663a34b0ebc
+Guid=50f392ba-db77-475c-8920-594d795b83ae
+HasDeclaration=True
+HasImplementation=False
+*)
+{DECLARATION}
+TYPE ENUMS_STIFFENSTEP :
+(
+	STIFFEN_STEP_Stop := 0,
+	STIFFEN_STEP_Start,
+	STIFFEN_STEP_Delay,
+	STIFFEN_STEP_Compensate
+);
+END_TYPE
+
+{IMPLEMENTATION}

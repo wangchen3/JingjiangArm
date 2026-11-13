@@ -1,0 +1,2 @@
+SYSTEM/sys.o: ../SYSTEM/sys.c ../SYSTEM/sys.h
+../SYSTEM/sys.h:

@@ -1,0 +1,4 @@
+../Kesai_Process/calcbase.c:13:5:KS_AutoFindGate	240	static
+../Kesai_Process/calcbase.c:143:7:KS_CalcBaselineByData_RS	48	static
+../Kesai_Process/calcbase.c:404:7:KS_CalcBaselineByData_FS	24	static
+../Kesai_Process/calcbase.c:694:7:KS_RatioL_ByThresholdCutting	0	static

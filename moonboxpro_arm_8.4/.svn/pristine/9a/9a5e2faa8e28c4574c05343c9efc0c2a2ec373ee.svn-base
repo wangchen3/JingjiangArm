@@ -1,0 +1,2974 @@
+/*
+ * markDetection.c
+ *
+ *  Created on: Jan 9, 2026
+ *      Author: 11744
+ */
+/******************************************************************************
+ * 文件名: mark_detection_optimized.c
+ * 描述: 修复和优化后的色标检测算法
+ * 主要修复：
+ * 1. 修复MATLAB接口模板创建中的单位转换
+ * 2. 修复模板匹配中的逆序排列计算
+ * 3. 优化状态机逻辑
+ * 4. 添加更详细的调试信息
+ ******************************************************************************/
+#include "markDetection.h"
+BYTE byErrCodeMsg;//当前程序运行错误码
+// ================== 辅助函数 ==================
+/**
+ * @brief 安全的环形索引计算
+ * @param nIdx 输入索引
+ * @param nSize 环形大小
+ * @return 规范化后的索引
+ */
+static inline short nSafeMod(short nIdx, short nSize)
+{
+    nIdx %= nSize;// 取模操作
+    if (nIdx < 0)// 处理负数情况
+        nIdx += nSize;
+    return nIdx;// 返回规范化后的索引
+}
+
+/**
+ * @brief 计算环形距离
+ * @param nA 点A位置
+ * @param nB 点B位置
+ * @return 两点之间的最短环形距离
+ */
+static inline short nCircularDistance(short nA, short nB)
+{
+    short nDiff = (nA > nB) ? (nA - nB) : (nB - nA); // 计算绝对差值
+    if (nDiff > MAX_ROUND_POINT / 2) // 如果差值超过一半，从另一侧计算距离
+    {
+        nDiff = MAX_ROUND_POINT - nDiff;// 计算环形另一侧的距离
+    }
+    return nDiff;// 返回最短距离
+}
+
+/**
+ * @brief 毫米到像素转换
+ * @param fMM 毫米值
+ * @param fGirth 版周
+ * @return 像素位置
+ */
+static inline short nMMtoPixel(float fMM, float fGirth)
+{
+    return (short)((fMM / fGirth) * MAX_ROUND_POINT + 0.5f);
+}
+
+
+/**
+ * @brief 快速绝对值计算
+ * @param nX 输入值
+ * @return 绝对值
+ */
+static inline short nFastAbs(short nX)
+{
+    return (nX < 0) ? -nX : nX; // 如果是负数则取反
+}
+
+// ================== 初始化函数 ==================
+/**
+ * @brief 初始化状态机
+ * @param pstStateMachine 状态机指针
+ * @note 初始化状态机的所有成员变量
+ */
+void vInitStateMachine(SignalDetectorT *pstDetector) {
+	SignalStateMachineT* pstStateMachine = &(pstDetector->stStateMachine);
+	//SignalListT *pstSignalListT = &(pstDetector->stSignalList);
+    pstStateMachine->eState = STATE_IDLE;
+    pstStateMachine->nSignalStart = 0;
+    pstStateMachine->nSignalEnd = 0;
+    pstStateMachine->nSignalCenter = 0;
+    pstStateMachine->nSignalWidth = 0;
+    pstStateMachine->bSignalValid = 0;
+    pstStateMachine->bySignalCount = 0;
+
+    // 初始化信号幅值相关字段
+    pstStateMachine->bySignalStartValue = 0;
+    pstStateMachine->bySignalEndValue = 0;
+    pstStateMachine->bySignalMinValue = 255;  // 初始化为最大值
+    pstStateMachine->nSignalMinPos = 0;
+    pstStateMachine->bySignalAmplitude = 0;
+
+    // 初始化窗口统计
+    pstStateMachine->unInnerWindowSum = 0;
+    pstStateMachine->unOuterWindowSum = 0;
+    pstStateMachine->unInnerWindowCount = 0;
+    pstStateMachine->unOuterWindowCount = 0;
+    memset(&pstDetector->stSignalList, 0, sizeof(SignalListT));
+    pstDetector->stSignalList.byCount = 0;
+
+ //   PRINT_DEBUG("状态机初始化完成\n");
+}
+
+
+/**
+ * @brief 从状态机统计信息计算信号有效幅值
+ * @param pstStateMachine 状态机指针
+ * @return 有效幅值
+ * @note 计算公式：(起点值 + 终点值)/2 - 最小值
+ */
+static inline unsigned char nCalculateAmplitudeFromStats(const SignalStateMachineT* pstStateMachine) {
+    if (pstStateMachine->nSignalWidth == 0) return 0;
+
+    // 计算起点和终点的平均值
+    short byAvg = (pstStateMachine->bySignalStartValue + pstStateMachine->bySignalEndValue) / 2;
+
+    // 计算有效幅值 = 平均值 - 最小值
+    unsigned char byAmplitude = ABS((short)byAvg - (short)pstStateMachine->bySignalMinValue);
+
+    // 确保幅值为非负
+    if (byAmplitude < 0) byAmplitude = 0;
+
+    return byAmplitude;
+}
+
+/**
+ * @brief 结束当前信号
+ * @param pstStateMachine 状态机指针
+ * @param nEndPosition 信号结束位置
+ * @param byEndValue 信号结束值
+ * @param nMinWidth 最小信号宽度
+ * @param nMaxWidth 最大信号宽度
+ */
+void vEndCurrentSignal(SignalStateMachineT* pstStateMachine, short nEndPosition,
+                       unsigned char byEndValue, short nMinWidth, short nMaxWidth) {
+    pstStateMachine->nSignalEnd = nEndPosition - 1;  // 记录信号结束位置
+    pstStateMachine->bySignalEndValue = byEndValue;  // 记录结束前一个点的值
+
+    if (pstStateMachine->nSignalWidth >= nMinWidth &&
+        pstStateMachine->nSignalWidth <= nMaxWidth) {  // 检查宽度是否有效
+        pstStateMachine->nSignalCenter = (pstStateMachine->nSignalStart + pstStateMachine->nSignalEnd) / 2;  // 计算信号中心
+        pstStateMachine->bSignalValid = 1;  // 标记为有效信号
+
+        // 计算信号有效幅值
+        pstStateMachine->bySignalAmplitude = nCalculateAmplitudeFromStats(pstStateMachine);
+
+//        PRINT_DEBUG("位置%d: 信号结束，宽度=%d，中心=%d，最小值=%d@%d，幅值=%d，有效\n",
+//                    nEndPosition, pstStateMachine->nSignalWidth,
+//                    pstStateMachine->nSignalCenter,
+//                    pstStateMachine->bySignalMinValue,
+//                    pstStateMachine->nSignalMinPos,
+//                    pstStateMachine->bySignalAmplitude);
+    } else {  // 如果宽度无效
+        pstStateMachine->bSignalValid = 0;  // 标记为无效信号
+//        PRINT_DEBUG("位置%d: 信号结束，宽度=%d，无效\n",
+//                    nEndPosition, pstStateMachine->nSignalWidth);
+    }
+
+    pstStateMachine->eState = STATE_SIGNAL_END;  // 转移到信号结束状态
+}
+
+/**
+ * @brief 强制结束当前信号（用于循环结束时）
+ * @param pstStateMachine 状态机指针
+ * @param nCurrentPosition 当前位置
+ * @param nMinWidth 最小信号宽度
+ * @param nMaxWidth 最大信号宽度
+ */
+void vForceEndCurrentSignal(SignalStateMachineT* pstStateMachine, short nCurrentPosition,
+                            short nMinWidth, short nMaxWidth) {
+    if (pstStateMachine->eState == STATE_IN_SIGNAL) {
+        // 使用当前值作为结束值
+        unsigned char byEndValue = pstStateMachine->bySignalEndValue;
+
+//        PRINT_DEBUG("循环结束前强制结束信号，当前位置=%d，信号宽度=%d\n",
+//                   nCurrentPosition, pstStateMachine->nSignalWidth);
+
+        vEndCurrentSignal(pstStateMachine, nCurrentPosition + 1, byEndValue, nMinWidth, nMaxWidth);
+    }
+}
+
+
+
+// ================== 状态机处理 ==================
+/**
+ * @brief 状态机处理单个采样点
+ * @param pstStateMachine 状态机指针
+ * @param bySample 当前采样值
+ * @param byPreSignalData 前一个采样值
+ * @param bIsSignal 是否为信号
+ * @param nPosition 当前位置
+ * @param nMinWidth 最小信号宽度
+ * @param nMaxWidth 最大信号宽度
+ * @param nMaxGap 最大信号间隔
+ *  @param xFlag_SlaveUseCmm_Pro pro为反极性做幅值的处理
+ *
+ */
+void vProcessSample(SignalStateMachineT* pstStateMachine, unsigned char bySample, unsigned char byPreSignalData,
+                    unsigned char bIsSignal, short nPosition,
+                    short nMinWidth, short nMaxWidth, short nMaxGap,unsigned char xFlag_SlaveUseCmm_Pro,unsigned char xInclNegative10vSignal) {
+
+	if (xInclNegative10vSignal) //双极性
+	{
+		bySample = RSDATADEAL(bySample);
+		byPreSignalData = RSDATADEAL(byPreSignalData);
+	}
+	else //单极性
+	{//不做处理
+
+	}
+    switch (pstStateMachine->eState) {
+        case STATE_IDLE:  // 空闲状态
+            if (bIsSignal) {  // 如果当前点是信号
+                pstStateMachine->eState = STATE_IN_SIGNAL;  // 进入信号状态
+                pstStateMachine->nSignalStart = nPosition;  // 记录信号起始位置
+                pstStateMachine->nSignalWidth = 1;  // 信号宽度初始化为1
+                pstStateMachine->bSignalValid = 0;  // 信号有效性初始化为0
+
+                // 初始化信号统计
+                pstStateMachine->bySignalStartValue = bySample;  // 记录起始点值
+                pstStateMachine->bySignalMinValue = bySample;    // 初始化最小值为起始点值
+                pstStateMachine->nSignalMinPos = nPosition;     // 最小值位置
+
+    //            PRINT_DEBUG("位置%d: 进入信号状态，起始位置=%d，起始值=%d\n",
+    //                       nPosition, nPosition, bySample);
+            } else {  // 如果当前点是背景
+
+
+                if (nPosition - pstStateMachine->nSignalEnd > nMaxGap) {  // 如果间隙太长
+                    pstStateMachine->bySignalCount = 0;  // 重置信号计数
+                }
+            }
+            break;
+
+        case STATE_IN_SIGNAL:  // 在信号中状态
+            if (bIsSignal)
+            {  // 如果当前点仍然是信号
+                pstStateMachine->nSignalWidth++;  // 信号宽度增加
+
+                // 更新信号最小值
+                if(xFlag_SlaveUseCmm_Pro)
+				{
+  				  if (bySample > pstStateMachine->bySignalMinValue) {
+  						pstStateMachine->bySignalMinValue = bySample;
+  						pstStateMachine->nSignalMinPos = nPosition;
+  				  }
+				}
+                else
+                {
+				  if (bySample < pstStateMachine->bySignalMinValue) {
+						pstStateMachine->bySignalMinValue = bySample;
+						pstStateMachine->nSignalMinPos = nPosition;
+				  }
+
+//                    PRINT_DEBUG("位置%d: 更新信号最小值=%d\n",
+//                               nPosition, bySample);
+                }
+            }else {  // 如果信号结束
+            	vEndCurrentSignal(pstStateMachine, nPosition, byPreSignalData, nMinWidth, nMaxWidth);
+            }
+            break;
+
+        case STATE_SIGNAL_END:  // 信号结束状态
+            if (bIsSignal) {  // 如果立即开始新信号
+                pstStateMachine->eState = STATE_IN_SIGNAL;  // 进入信号状态
+                pstStateMachine->nSignalStart = nPosition;  // 记录新信号起始位置
+                pstStateMachine->nSignalWidth = 1;  // 信号宽度初始化为1
+                pstStateMachine->bSignalValid = 0;  // 信号有效性初始化为0
+
+                // 重置信号统计
+                pstStateMachine->bySignalStartValue = bySample;  // 记录起始点值
+                pstStateMachine->bySignalMinValue = bySample;    // 初始化最小值为起始点值
+                pstStateMachine->nSignalMinPos = nPosition;     // 最小值位置
+
+               // PRINT_DEBUG("位置%d: 立即开始新信号\n", nPosition);
+            } else {  // 如果没有立即开始新信号
+                pstStateMachine->eState = STATE_IN_GAP;  // 进入间隙状态
+            }
+            break;
+
+        case STATE_IN_GAP:  // 在间隙中状态
+            if (bIsSignal) {  // 如果开始新信号
+                pstStateMachine->eState = STATE_IN_SIGNAL;  // 进入信号状态
+                pstStateMachine->nSignalStart = nPosition;  // 记录信号起始位置
+                pstStateMachine->nSignalWidth = 1;  // 信号宽度初始化为1
+                pstStateMachine->bSignalValid = 0;  // 信号有效性初始化为0
+
+                // 重置信号统计
+                pstStateMachine->bySignalStartValue = bySample;  // 记录起始点值
+                pstStateMachine->bySignalMinValue = bySample;    // 初始化最小值为起始点值
+                pstStateMachine->nSignalMinPos = nPosition;     // 最小值位置
+
+                //PRINT_DEBUG("位置%d: 间隙后开始新信号\n", nPosition);
+            } else if (nPosition - pstStateMachine->nSignalEnd > nMaxGap) {  // 如果间隙太长
+                pstStateMachine->eState = STATE_IDLE;  // 回到空闲状态
+                //PRINT_DEBUG("位置%d: 间隙过长，返回空闲状态\n", nPosition);
+            }
+            break;
+    }
+
+}
+
+/**
+ * @brief 内外滑窗二值化处理
+ * @param pstDetector 检测器指针
+ * @param pabyData 图像数据
+ * @param nPosition 当前位置
+ * @param xFlag_SlaveUseCmm_Pro Pro 信号为反极性做特殊处理
+ * @param bUpdateWindows 是否更新窗口统计
+ * @return 是否为信号
+ * @note 比较内部窗口均值与外部窗口均值
+ */
+unsigned char bDualWindowBinarization(SignalDetectorT *pstDetector,
+                                      const unsigned char *pabyData,
+                                      short nPosition,
+									  unsigned char xFlag_SlaveUseCmm_Pro,
+									  unsigned char xInclNegative10vSignal,
+                                      unsigned char bUpdateWindows)
+{
+    SignalStateMachineT *pstStateMachine = &pstDetector->stStateMachine;
+
+    // 计算内外窗口半径
+    short nInnerRadius = (pstDetector->nInnerWindowSize - 1) / 2;
+    short nOuterRadius = (pstDetector->nOuterWindowSize - 1) / 2;
+
+    if (xInclNegative10vSignal)//双极性
+    {
+	  // 如果是第一个点，需要初始化窗口统计
+		if (nPosition == 0)
+		{
+			pstStateMachine->unInnerWindowSum = 0;
+			pstStateMachine->unOuterWindowSum = 0;
+			pstStateMachine->unInnerWindowCount = 0;
+			pstStateMachine->unOuterWindowCount = 0;
+
+			// 初始化内部窗口
+			for (short j = -nInnerRadius; j <= nInnerRadius; j++)
+			{
+				short nOffset = nPosition + j;
+				short nCyclicIdx = (nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				pstStateMachine->unInnerWindowSum += RSDATADEAL(pabyData[nCyclicIdx]);
+				pstStateMachine->unInnerWindowCount++;
+			}
+
+			// 初始化外部窗口
+			for (short j = -nOuterRadius; j <= nOuterRadius; j++)
+			{
+				short nOffset = nPosition + j;
+				short nCyclicIdx = (nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				pstStateMachine->unOuterWindowSum += RSDATADEAL(pabyData[nCyclicIdx]);
+				pstStateMachine->unOuterWindowCount++;
+			}
+		}
+		else if (bUpdateWindows)
+		{
+			// 更新内部窗口
+			short nHeadOffset = nPosition - nInnerRadius - 1;
+			short nHeadIdx = (nHeadOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+			short nTailOffset = nPosition + nInnerRadius;
+			short nTailIdx = (nTailOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+			pstStateMachine->unInnerWindowSum -= RSDATADEAL(pabyData[nHeadIdx]);
+			pstStateMachine->unInnerWindowSum += RSDATADEAL(pabyData[nTailIdx]);
+
+			// 更新外部窗口
+			nHeadOffset = nPosition - nOuterRadius - 1;
+			nHeadIdx = (nHeadOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+			nTailOffset = nPosition + nOuterRadius;
+			nTailIdx = (nTailOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+			pstStateMachine->unOuterWindowSum -= RSDATADEAL(pabyData[nHeadIdx]);
+			pstStateMachine->unOuterWindowSum += RSDATADEAL(pabyData[nTailIdx]);
+		}
+
+    }
+    else//单极性
+    {
+	  // 如果是第一个点，需要初始化窗口统计
+		if (nPosition == 0)
+		{
+			pstStateMachine->unInnerWindowSum = 0;
+			pstStateMachine->unOuterWindowSum = 0;
+			pstStateMachine->unInnerWindowCount = 0;
+			pstStateMachine->unOuterWindowCount = 0;
+
+			// 初始化内部窗口
+			for (short j = -nInnerRadius; j <= nInnerRadius; j++)
+			{
+				short nOffset = nPosition + j;
+				short nCyclicIdx = (nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				pstStateMachine->unInnerWindowSum += pabyData[nCyclicIdx];
+				pstStateMachine->unInnerWindowCount++;
+			}
+
+			// 初始化外部窗口
+			for (short j = -nOuterRadius; j <= nOuterRadius; j++)
+			{
+				short nOffset = nPosition + j;
+				short nCyclicIdx = (nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				pstStateMachine->unOuterWindowSum += pabyData[nCyclicIdx];
+				pstStateMachine->unOuterWindowCount++;
+			}
+		}
+		else if (bUpdateWindows)
+		{
+			// 更新内部窗口
+			short nHeadOffset = nPosition - nInnerRadius - 1;
+			short nHeadIdx = (nHeadOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+			short nTailOffset = nPosition + nInnerRadius;
+			short nTailIdx = (nTailOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+			pstStateMachine->unInnerWindowSum -= pabyData[nHeadIdx];
+			pstStateMachine->unInnerWindowSum += pabyData[nTailIdx];
+
+			// 更新外部窗口
+			nHeadOffset = nPosition - nOuterRadius - 1;
+			nHeadIdx = (nHeadOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+			nTailOffset = nPosition + nOuterRadius;
+			nTailIdx = (nTailOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+			pstStateMachine->unOuterWindowSum -= pabyData[nHeadIdx];
+			pstStateMachine->unOuterWindowSum += pabyData[nTailIdx];
+		}
+    }
+
+    // 计算内外窗口均值
+    double dInnerMean = 0.0;
+    double dOuterMean = 0.0;
+
+    if (pstStateMachine->unInnerWindowCount > 0)
+    {
+        dInnerMean = (double)pstStateMachine->unInnerWindowSum / pstStateMachine->unInnerWindowCount;
+    }
+
+    if (pstStateMachine->unOuterWindowCount > 0)
+    {
+        dOuterMean = (double)pstStateMachine->unOuterWindowSum / pstStateMachine->unOuterWindowCount;
+    }
+
+    // 判断条件：内部窗口均值 < 外部窗口均值 - 偏移
+    unsigned char bIsSignal = 0;
+    if(xFlag_SlaveUseCmm_Pro)
+    {
+		if (dInnerMean > (dOuterMean + pstDetector->cMeanOffset))
+			{
+				bIsSignal = 1;
+			}
+    }
+    else
+    {
+		if (dInnerMean < (dOuterMean - pstDetector->cMeanOffset))
+			{
+				bIsSignal = 1;
+			}
+    }
+
+    return bIsSignal;
+}
+
+
+/**
+ * @brief 内外滑窗处理信号帧
+ * @param pstDetector 检测器指针
+ * @param pabyData 图像数据
+ */
+void vProcessDualWindowFrame(SignalDetectorT *pstDetector, const unsigned char *pabyData ,unsigned char xFlag_SlaveUseCmm_Pro,unsigned char xInclNegative10vSignal)
+{
+    SignalStateMachineT *pstStateMachine = &pstDetector->stStateMachine;
+    SignalListT *pstSignalList = &pstDetector->stSignalList;
+
+    pstSignalList->byCount = 0;
+    //PRINT_INFO("开始内外滑窗处理，内窗=%d, 外窗=%d\n",
+    //           pstDetector->nInnerWindowSize, pstDetector->nOuterWindowSize);
+   // unsigned char *pabyDataTemp;
+    for (short nIdx = 0; nIdx < MAX_ROUND_POINT; nIdx++)
+    {
+        // 1. 使用内外滑窗进行二值化
+        unsigned char bIsSignal = bDualWindowBinarization(pstDetector, pabyData, nIdx, xFlag_SlaveUseCmm_Pro,xInclNegative10vSignal,1);
+
+        // 2. 更新背景统计（仅针对非信号点）
+         unsigned char byPreSignalData;
+         if (nIdx == 0)
+         {
+            byPreSignalData = pabyData[MAX_ROUND_POINT-1];
+         }
+         else
+         {
+            byPreSignalData = pabyData[nIdx-1];
+         }
+        // 3. 状态机处理
+        vProcessSample(pstStateMachine, pabyData[nIdx], byPreSignalData, bIsSignal, nIdx,
+                       pstDetector->nMinWidth, pstDetector->nMaxWidth, pstDetector->nMaxGap, xFlag_SlaveUseCmm_Pro,xInclNegative10vSignal);
+
+        // 4. 保存有效信号
+        if (pstStateMachine->bSignalValid && pstSignalList->byCount < MAX_SIGNALS)
+        {
+            SignalInfoT *pstSignal = &pstSignalList->astSignals[pstSignalList->byCount];
+
+            pstSignal->nStart = pstStateMachine->nSignalStart;
+            pstSignal->nEnd = pstStateMachine->nSignalEnd;
+            pstSignal->nCenter = pstStateMachine->nSignalCenter;
+            pstSignal->nWidth = pstStateMachine->nSignalWidth;
+            pstSignal->nRadius = pstStateMachine->nSignalWidth / 2;
+            pstSignal->bySignalMinValue =pstStateMachine->bySignalMinValue;
+            pstSignal->nSignalMinValueId = pstStateMachine->nSignalMinPos;
+            pstSignal->bValid = 1;
+
+             // 5. 从状态机获取计算好的幅值
+            pstSignal->byAmplitude = pstStateMachine->nSignalMinPos;
+
+//            PRINT_DEBUG("检测到信号%d: 中心=%d, 宽度=%d, 幅值=%d\n",
+//                        pstSignalList->byCount, pstSignal->nCenter,
+//                        pstSignal->nWidth, pstSignal->byAmplitude);
+
+            pstSignalList->byCount++;
+            pstStateMachine->bSignalValid = 0;
+        }
+    }
+    // 6. 循环结束后检查是否有未结束的信号
+   // 如果循环结束时仍然在信号中，强制结束信号
+   vForceEndCurrentSignal(pstStateMachine, MAX_ROUND_POINT - 1,
+                         pstDetector->nMinWidth, pstDetector->nMaxWidth);
+
+   // 7. 再次检查是否有有效信号需要保存（处理循环结束时强制结束的信号）
+   if (pstStateMachine->bSignalValid && pstSignalList->byCount < MAX_SIGNALS)
+   {
+       SignalInfoT *pstSignal = &pstSignalList->astSignals[pstSignalList->byCount];
+
+       pstSignal->nStart = pstStateMachine->nSignalStart;
+       pstSignal->nEnd = pstStateMachine->nSignalEnd;
+       pstSignal->nCenter = pstStateMachine->nSignalCenter;
+       pstSignal->nWidth = pstStateMachine->nSignalWidth;
+       pstSignal->nRadius = pstStateMachine->nSignalWidth / 2;
+       pstSignal->bValid = 1;
+       pstSignal->byAmplitude = pstStateMachine->nSignalMinPos;
+//       PRINT_DEBUG("循环结束后检测到信号%d: 中心=%d, 宽度=%d, 幅值=%d\n",
+//                  pstSignalList->byCount, pstSignal->nCenter,
+//                  pstSignal->nWidth, pstSignal->byAmplitude);
+       pstSignalList->byCount++;
+       pstStateMachine->bSignalValid = 0;
+   }
+
+  //  PRINT_INFO("内外滑窗处理完成: 检测到%d个信号",
+  //             pstSignalList->byCount);
+	// 打印所有找到信号的详细信息
+	// vPrintAllSignalInfoEnhanced(pstSignalList, pabyData);
+}
+
+/**
+ * @brief 初始化内外滑窗检测器
+ * @param pstDetector 检测器指针
+ * @param fGirth 版周
+ * @param cMeanOffset 均值偏移
+ * @param nMinWidth 最小宽度
+ * @param nMaxWidth 最大宽度
+ * @param nMaxGap 最大间隔
+ */
+void vInitDualWindowDetector(SignalDetectorT *pstDetector,
+                             float fGirth, char cMeanOffset,
+                             short nMinWidth, short nMaxWidth, short nMaxGap)
+{
+    pstDetector->fGirth = fGirth;
+    pstDetector->cMeanOffset = cMeanOffset;
+    pstDetector->nMinWidth = nMinWidth;
+    pstDetector->nMaxWidth = nMaxWidth;
+    pstDetector->nMaxGap = nMaxGap;
+    pstDetector->bNeedRecalc = 0;
+    pstDetector->dBackgroundStd = 0.0;
+    pstDetector->stSignalList.byCount = 0;
+
+    float maxSingalWidth=7;
+    float SpotWidth=pstDetector->rSpotWidth;
+    float outerCoff=pstDetector->rOuterCoff;
+    float innerCoff=pstDetector->rInnerCoff;
+
+    // 根据版周计算窗口大小
+    // 内部窗口：约2mm对应的像素
+    short nInnerSize = (short)(SpotWidth* innerCoff / fGirth * MAX_ROUND_POINT + 0.5f);
+    // if (nInnerSize < 3)
+    //     nInnerSize = 3;
+    // if (nInnerSize > 6)
+    //     nInnerSize = 6;
+     if (nInnerSize % 2 == 0)
+         nInnerSize++;
+
+    // 外部窗口：约20mm对应的像素
+    short nOuterSize = (short)((SpotWidth+maxSingalWidth)* outerCoff / fGirth * MAX_ROUND_POINT + 0.5f);
+    // if (nOuterSize < 40)
+    //     nOuterSize = 40;
+    // if (nOuterSize > 267)
+    //     nOuterSize = 267;
+     if (nOuterSize % 2 == 0)
+         nOuterSize++;
+    // nInnerSize=5;
+    // nOuterSize=99;
+    pstDetector->nInnerWindowSize = nInnerSize;
+    pstDetector->nOuterWindowSize = nOuterSize;
+    for (int nIdx = 0; nIdx < REPEAT_SEARCH_ROUNDS; nIdx++)
+    {
+       pstDetector->anCurLabelPosTemp[nIdx] = -1;
+       pstDetector->anPreLabelPosTemp[nIdx] = -1;
+    }
+//    PRINT_INFO("内外滑窗检测器初始化: 内窗=%d, 外窗=%d, 偏移=%d\n",
+//                nInnerSize, nOuterSize, cMeanOffset);
+
+}
+
+
+
+// ================== 标记模板实现 ==================
+/**
+ * @brief 初始化标记模板
+ * @param pstTemplate 模板指针
+ * @param byMarkType 标记类型
+ * @param byColorId 颜色ID
+ * @param fSimilarityThreshold 相似度阈值
+ */
+void vInitMarkTemplate(MarkTemplateT *pstTemplate,
+                       unsigned char byMarkType, unsigned char byColorId,
+                       float fSimilarityThreshold)
+{
+    pstTemplate->byMarkType = byMarkType;
+    pstTemplate->byColorId = byColorId;
+    pstTemplate->fSimilarityThreshold = fSimilarityThreshold;
+    pstTemplate->bySignalCount = 0;
+    pstTemplate->nTotalWidth = 0;
+    pstTemplate->cFound = 0;
+    //2026.8.4.174435  索引上限使用错误
+    //for (int nIdx = 0; nIdx < MAX_SIGNALS; nIdx++)
+    for (int nIdx = 0; nIdx < MARKTEMP_COUNT; nIdx++)
+    {
+        //pstTemplate->achMarkIds[nIdx] = -1;
+        pstTemplate->anLabelPos[nIdx] = -1;
+        pstTemplate->anLabelRadius[nIdx] = -1;
+    }
+
+//    PRINT_INFO("标记模板初始化: 类型=%d, 颜色ID=%d, 相似度阈值=%.2f\n",
+//               byMarkType, byColorId, fSimilarityThreshold);
+}
+
+/**
+ * @brief 添加模板信号
+ * @param pstTemplate 模板指针
+ * @param nStart 起始位置
+ * @param nEnd 结束位置
+ * @param byPercentage 百分比
+ * @return 成功返回1，失败返回0
+ */
+unsigned char bAddTemplateSignal(MarkTemplateT *pstTemplate,
+        						 short iModeMidPoint, short byModeRadius,
+                                 unsigned char byPercentage,
+                                 unsigned char byAmendmentTemp)
+{
+	//2026.8.4.183632+索引上限又判断错了@by liu.yt
+    //if (pstTemplate->bySignalCount >= MAX_SIGNALS)
+    if (pstTemplate->bySignalCount >= MARKTEMP_COUNT)
+    {
+        //PRINT_ERROR("无法添加模板信号: 已达到最大信号数%d\n", MAX_SIGNALS);
+        byErrCodeMsg = 10;
+        return 0;
+    }
+
+    unsigned char byIdx = pstTemplate->bySignalCount;
+    //    short nCenter = (nStart + nEnd + byAmendmentTemp) / 2;
+    //    short nRadius = (nEnd + byAmendmentTemp - nStart) / 2;
+	short nCenter = iModeMidPoint;
+	short nRadius = byModeRadius;
+
+    pstTemplate->anMidPoints[byIdx] = nCenter;
+    pstTemplate->anRadii[byIdx] = nRadius;
+    pstTemplate->abyPercentages[byIdx] = byPercentage;
+    pstTemplate->nTotalWidth += (2 * nRadius + 1) * byPercentage / 100;
+
+    pstTemplate->bySignalCount++;
+
+//    PRINT_DEBUG("添加模板信号%d: 起始=%d, 结束=%d, 中心=%d, 半径=%d, 百分比=%d, 修正量=%d \n",
+//               byIdx, nStart, nEnd, nCenter, nRadius, byPercentage,byAmendmentTemp);
+    return 1;
+}
+
+/**
+ * @brief 预计算相对位置
+ * @param pstTemplate 模板指针
+ */
+void vPrecomputeRelativePositions(MarkTemplateT *pstTemplate)
+{
+    if (pstTemplate->bySignalCount == 0)
+    {
+        byErrCodeMsg=11;//模板中没有信号
+        //PRINT_WARNING("模板中没有信号，无法计算相对位置\n");
+        return;
+    }
+
+    short nBase = pstTemplate->anMidPoints[0];
+    for (unsigned char byIdx = 0; byIdx < pstTemplate->bySignalCount; byIdx++)
+    {
+        pstTemplate->anRelativePos[byIdx] = pstTemplate->anMidPoints[byIdx] - nBase;
+        //PRINT_DEBUG("信号%d的相对位置: %d\n", byIdx, pstTemplate->anRelativePos[byIdx]);
+    }
+
+    //PRINT_INFO("相对位置预计算完成，基准信号位置=%d\n", nBase);
+}
+
+
+/**
+ * @brief 初始化轻量级DBSCAN
+ * @param pstDbscan DBSCAN指针
+ */
+void vInitLightDbscan(float fGirth,  LightDbscanT* pstDbscan) {
+    pstDbscan->byNodeCount = 0;
+    pstDbscan->byClusterCount = 0;
+    pstDbscan->byBestCluster = 0;
+
+    pstDbscan->nClusterRadiusPoint=(short)((CLUSTER_RADIUSMM / fGirth)*MAX_ROUND_POINT);
+    if (pstDbscan->nClusterRadiusPoint >=30) {
+    	pstDbscan->nClusterRadiusPoint=30;
+    }
+    else if (pstDbscan->nClusterRadiusPoint <=10){
+    	pstDbscan->nClusterRadiusPoint=10;
+    }
+    // 初始化所有节点
+    for (unsigned char byIdx = 0; byIdx < MAX_SIGNALS; byIdx++) {
+        pstDbscan->astNodes[byIdx].bCore = 0;
+        pstDbscan->astNodes[byIdx].bVisited = 0;
+        pstDbscan->astNodes[byIdx].byCluster = 0;
+    }
+
+    // 初始化簇统计信息
+    for (unsigned char byClusterIdx = 0; byClusterIdx < MAX_CLUSTERS; byClusterIdx++) {
+        pstDbscan->astClusterStats[byClusterIdx].bySize = 0;
+    }
+    //PRINT_DEBUG("轻量级DBSCAN初始化完成\n");
+}
+
+
+/**
+ * @brief 添加点到轻量级DBSCAN
+ * @param pstDbscan DBSCAN指针
+ * @param nPoint 点位置
+ * @param fScore 匹配分数
+ * @return 添加成功返回1，否则返回0
+ */
+unsigned char bAddPointToLightDbscan(LightDbscanT* pstDbscan, short nPoint, float fScore) {
+    if (pstDbscan->byNodeCount >= MAX_SIGNALS) {
+//        PRINT_WARNING("DBSCAN点数量超过最大值%d\n", MAX_SIGNALS);
+        byErrCodeMsg = 13;  // DBSCAN点数量超过最大值
+        return 0;
+    }
+
+    LightDbscanNodeT* pstNode = &pstDbscan->astNodes[pstDbscan->byNodeCount];
+    pstNode->nPoint = nPoint;
+    pstNode->fScore = fScore;
+    pstNode->bCore = 0;
+    pstNode->bVisited = 0;
+    pstNode->byCluster = 0;
+
+    pstDbscan->byNodeCount++;
+
+//    PRINT_DEBUG("添加DBSCAN点%d: 位置=%d, 分数=%.3f\n",
+//                pstDbscan->byNodeCount, nPoint, fScore);
+
+    return 1;
+}
+
+
+/**
+ * @brief 简化环形中心计算（无三角函数）
+ * @param pabyPoints 点位置数组
+ * @param byCount 点数量
+ * @return 环形中心位置
+ */
+static short nCalculateSimpleRingCenter(const short* pabyPoints, unsigned char byCount) {
+    if (byCount == 0) {
+        return 0;
+    }
+
+    if (byCount == 1) {
+        return pabyPoints[0];
+    }
+
+    // 方法：找到簇中所有点，选择一个点作为参考
+    // 将所有点调整到参考点周围（不超过半圆）
+
+    // 1. 找到簇中最小点
+    short nMin = pabyPoints[0];
+    for (unsigned char byIdx = 1; byIdx < byCount; byIdx++) {
+        if (pabyPoints[byIdx] < nMin) {
+            nMin = pabyPoints[byIdx];
+        }
+    }
+
+    // 2. 将所有点调整到最小点周围
+    int nAdjustedSum = 0;
+    for (unsigned char byIdx = 0; byIdx < byCount; byIdx++) {
+        short nPoint = pabyPoints[byIdx];
+
+        // 如果点在最小点之前（环形意义上），调整到后面
+        // 例如：最小点是4，点3990应该被看作-10
+        if (nPoint - nMin > MAX_ROUND_POINT / 2) {
+            nPoint -= MAX_ROUND_POINT;
+        } else if (nMin - nPoint > MAX_ROUND_POINT / 2) {
+            nPoint += MAX_ROUND_POINT;
+        }
+
+        nAdjustedSum += nPoint;
+    }
+
+    // 3. 计算平均值
+    short nCenter = (short)(nAdjustedSum / byCount);
+
+    // 4. 将结果调整回[0, MAX_ROUND_POINT-1]范围
+    while (nCenter < 0) nCenter += MAX_ROUND_POINT;
+    while (nCenter >= MAX_ROUND_POINT) nCenter -= MAX_ROUND_POINT;
+
+    return nCenter;
+}
+
+
+/**
+ * @brief 执行轻量级DBSCAN聚类
+ * @param pstDbscan DBSCAN指针
+ * @note 只在节点中标记簇ID，不存储簇成员数组
+ */
+void vPerformLightDbscanClustering(LightDbscanT* pstDbscan) {
+    if (pstDbscan->byNodeCount < 2) {
+//        PRINT_DEBUG("DBSCAN节点数=%d，无法聚类\n", pstDbscan->byNodeCount);
+        return;
+    }
+
+    // 第一步：识别所有核心点
+    for (unsigned char byIdx = 0; byIdx < pstDbscan->byNodeCount; byIdx++) {
+        unsigned char byNeighborCount = 0;
+
+        for (unsigned char byJdx = 0; byJdx < pstDbscan->byNodeCount; byJdx++) {
+            if (byIdx == byJdx) continue;
+
+            if (nCircularDistance(pstDbscan->astNodes[byIdx].nPoint,
+                                 pstDbscan->astNodes[byJdx].nPoint) <= pstDbscan->nClusterRadiusPoint) {
+                byNeighborCount++;
+                if (byNeighborCount >= MIN_NEIGHBORS) {
+                    pstDbscan->astNodes[byIdx].bCore = 1;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 第二步：扩展簇，只在节点中标记簇ID
+    unsigned char byNextClusterId = 1;  // 簇ID从1开始，0表示噪声点
+    unsigned char abyQueue[MAX_SIGNALS];
+    unsigned char byQueueFront, byQueueRear;
+    // 临时数组，用于收集簇中点位置和分数
+	short anClusterPoints[MAX_SIGNALS];
+	float afClusterScores[MAX_SIGNALS];
+
+    for (unsigned char byStartIdx = 0; byStartIdx < pstDbscan->byNodeCount; byStartIdx++) {
+        // 跳过已访问的点或非核心点
+        if (pstDbscan->astNodes[byStartIdx].bVisited ||
+            !pstDbscan->astNodes[byStartIdx].bCore) {
+            continue;
+        }
+
+        // 检查簇数量限制
+        if (byNextClusterId > MAX_CLUSTERS) {
+            //PRINT_WARNING("已达到最大簇数%d，无法创建新簇\n", MAX_CLUSTERS);
+            break;
+        }
+
+        // 当前簇ID
+        unsigned char byCurrentClusterId = byNextClusterId;
+        byNextClusterId++;
+        pstDbscan->byClusterCount = byCurrentClusterId;
+
+        // 初始化簇统计
+        unsigned char byClusterIdx = byCurrentClusterId - 1;
+        pstDbscan->astClusterStats[byClusterIdx].bySize = 0;
+
+        // 重置临时数组
+        unsigned char byTempCount = 0;
+
+        // 初始化队列
+        byQueueFront = 0;
+        byQueueRear = 0;
+
+        // 将起始节点加入队列
+        abyQueue[byQueueRear++] = byStartIdx;
+        pstDbscan->astNodes[byStartIdx].bVisited = 1;
+        pstDbscan->astNodes[byStartIdx].byCluster = byCurrentClusterId;
+
+        // 添加到临时数组
+		anClusterPoints[byTempCount] = pstDbscan->astNodes[byStartIdx].nPoint;
+		afClusterScores[byTempCount] = pstDbscan->astNodes[byStartIdx].fScore;
+		byTempCount++;
+
+//        PRINT_INFO("开始簇%d(簇ID=%d)，起始节点=%d[位置=%d]\n",
+//                   byClusterIdx, byCurrentClusterId, byStartIdx, pstDbscan->astNodes[byStartIdx].nPoint);
+
+        // 扩展簇
+        while (byQueueFront < byQueueRear) {
+            unsigned char byCurrentNode = abyQueue[byQueueFront++];
+
+            // 查找当前节点的邻居
+            for (unsigned char byNeighborIdx = 0; byNeighborIdx < pstDbscan->byNodeCount; byNeighborIdx++) {
+                if (byNeighborIdx == byCurrentNode) continue;
+                if (pstDbscan->astNodes[byNeighborIdx].bVisited) continue;
+
+                // 检查距离
+                if (nCircularDistance(pstDbscan->astNodes[byCurrentNode].nPoint,
+                                     pstDbscan->astNodes[byNeighborIdx].nPoint) <= pstDbscan->nClusterRadiusPoint) {
+                    // 标记为已访问
+                    pstDbscan->astNodes[byNeighborIdx].bVisited = 1;
+                    pstDbscan->astNodes[byNeighborIdx].byCluster = byCurrentClusterId;
+
+                    // 添加到临时数组
+					if (byTempCount < MAX_SIGNALS) {
+						anClusterPoints[byTempCount] = pstDbscan->astNodes[byNeighborIdx].nPoint;
+						afClusterScores[byTempCount] = pstDbscan->astNodes[byNeighborIdx].fScore;
+						byTempCount++;
+					}
+
+//                    #if DBSCAN_DEBUG_LEVEL >= 3
+//                    PRINT_DEBUG("  将节点%d[位置=%d]添加到簇%d\n",
+//                               byNeighborIdx, pstDbscan->astNodes[byNeighborIdx].nPoint, byCurrentClusterId);
+//                    #endif
+
+                    // 如果是核心点，加入队列继续扩展
+                    if (pstDbscan->astNodes[byNeighborIdx].bCore) {
+                        if (byQueueRear < MAX_SIGNALS) {
+                            abyQueue[byQueueRear++] = byNeighborIdx;
+                        } else {
+//                            PRINT_WARNING("队列已满，无法添加核心节点%d\n", byNeighborIdx);
+                        }
+                    }
+                }
+            }
+        }
+        // 计算簇统计信息
+		pstDbscan->astClusterStats[byClusterIdx].bySize = byTempCount;
+
+		// 计算总分数和平均分数
+		float fTotalScore = 0.0f;
+		for (unsigned char byIdx = 0; byIdx < byTempCount; byIdx++) {
+			fTotalScore += afClusterScores[byIdx];
+		}
+		pstDbscan->astClusterStats[byClusterIdx].fAverageScore =
+			(byTempCount > 0) ? fTotalScore / byTempCount : 0.0f;
+
+		// 计算簇的中心点（考虑环形特性）
+		if (byTempCount > 0) {
+			// 方法1: 使用加权中心
+			pstDbscan->astClusterStats[byClusterIdx].nCenter =
+					nCalculateSimpleRingCenter(anClusterPoints, byTempCount);
+		}
+
+//		PRINT_INFO("簇%d(簇ID=%d)扩展完成，大小=%d，中心点=%d\n",
+//				   byClusterIdx, byCurrentClusterId, byTempCount,
+//				   pstDbscan->astClusterStats[byClusterIdx].nCenter);
+
+    }
+
+    // 第三步：标记未访问的点为噪声点
+    unsigned char byNoiseCount = 0;
+    for (unsigned char byIdx = 0; byIdx < pstDbscan->byNodeCount; byIdx++) {
+        if (!pstDbscan->astNodes[byIdx].bVisited) {
+            pstDbscan->astNodes[byIdx].byCluster = 0;  // 0表示噪声点
+            byNoiseCount++;
+
+//            #if DBSCAN_DEBUG_LEVEL >= 2
+//            PRINT_DEBUG("节点%d[位置=%d]标记为噪声点\n",
+//                       byIdx, pstDbscan->astNodes[byIdx].nPoint);
+//            #endif
+        }
+    }
+
+//    PRINT_INFO("噪声点数量: %d\n", byNoiseCount);
+
+    // 第四步：选择最佳簇
+//        PRINT_INFO("========== 开始选择最佳簇 ==========\n");
+//        PRINT_INFO("总簇数: %d\n", pstDbscan->byClusterCount);
+
+	float fBestScore = 0.0f;
+	pstDbscan->byBestCluster = 0;  // 默认第一个簇为最佳
+
+	for (unsigned char byClusterIdx = 0; byClusterIdx < pstDbscan->byClusterCount; byClusterIdx++)
+	{
+		ClusterStatT* pstStat = &pstDbscan->astClusterStats[byClusterIdx];
+
+		if (pstStat->bySize > 0)
+		{
+			// 计算平均分数
+			float fScore  = pstStat->fAverageScore;
+			//PRINT_INFO("  初始分数: %.3f\n", fScore);
+
+			// 簇大小加权
+			float fSizeWeight = 1.0f + 0.05f * (pstStat->bySize - 1);
+			fScore *= fSizeWeight;
+//                PRINT_INFO("  簇大小加权: 权重=%.3f, 加权后分数=%.3f\n", fSizeWeight, fScore);
+
+			// 打印最终分数
+			//PRINT_INFO("  簇[%d]最终分数: %.3f\n", byClusterIdx, fScore);
+
+			// 更新最佳簇
+			if (fScore  > fBestScore)
+			{
+//                    PRINT_INFO("  √ 簇[%d]成为当前最佳簇 (%.3f > %.3f)\n",
+//                              byClusterIdx, fScore, fBestScore);
+				fBestScore = fScore;
+				pstDbscan->byBestCluster = byClusterIdx;
+			}
+			else
+			{
+//                    PRINT_INFO("  × 簇[%d]不如当前最佳簇[%d] (%.3f ≤ %.3f)\n",
+//                              byClusterIdx, pstDbscan->byBestCluster, fScore, fBestScore);
+			}
+		}
+		else
+		{
+//                PRINT_WARNING("簇[%d]大小为0，跳过评估\n", byClusterIdx);
+		}
+	}
+//    PRINT_INFO("轻量级DBSCAN聚类完成: 簇数=%d, 最佳簇=%d, 最佳分数=%.3f\n",
+//               pstDbscan->byClusterCount, pstDbscan->byBestCluster, fBestScore);
+}
+
+// ================== 标记位置计算 ==================
+/**
+ * @brief 构建标记位置
+ * @param pstTemplate 模板指针
+ * @param nBasePosition 基准位置
+ * @param panPositions 位置数组
+ */
+void vBuildMarkPositions(const MarkTemplateT *pstTemplate, short nBasePosition,
+                         short *panPositions)
+{
+    for (unsigned char byIdx = 0; byIdx < pstTemplate->bySignalCount; byIdx++)
+    {
+
+        //unsigned char bySigIdx = pstTemplate->achMarkIds[byIdx];
+        short nOffset = pstTemplate->anRelativePos[byIdx];
+        panPositions[byIdx] = (nBasePosition + nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+    }
+}
+
+
+
+
+/*****************************************************************/
+/**
+ * @brief 获取簇的平均位置
+ * @param pstDbscan DBSCAN指针
+ * @param byClusterIdx 簇索引
+ * @return 平均位置
+ */
+short nGetLightClusterCenter(LightDbscanT* pstDbscan, unsigned char byClusterIdx) {
+    if (byClusterIdx >= pstDbscan->byClusterCount) {
+        return 0;
+    }
+
+    ClusterStatT* pstStat = &pstDbscan->astClusterStats[byClusterIdx];
+
+    if (pstStat->bySize > 0) {
+        return (short)(pstStat->nCenter);
+    }
+
+    return 0;
+}
+
+
+/**
+ * @brief 获取簇的大小
+ * @param pstDbscan DBSCAN指针
+ * @param byClusterIdx 簇索引
+ * @return 簇大小
+ */
+unsigned char byGetLightClusterSize(LightDbscanT* pstDbscan, unsigned char byClusterIdx) {
+    if (byClusterIdx >= pstDbscan->byClusterCount) {
+        return 0;
+    }
+
+    return pstDbscan->astClusterStats[byClusterIdx].bySize;
+}
+
+/**
+ * @brief 从DBSCAN结果提取标记位置（简化实用版）
+ * @param pstDbscan DBSCAN指针
+ * @param pstTemplate 模板指针
+ * @param pstResult 结果指针
+ * @param pstDetector 检测器指针
+ */
+void vExtractMarksFromLightClusterSimple(LightDbscanT *pstDbscan,
+                                        const MarkTemplateT *pstTemplate,
+                                        MarkTemplateT *pstResult,
+                                        const SignalDetectorT* pstDetector) {
+    if (pstDbscan->byClusterCount == 0) {
+        pstResult->cFound = 0;
+        byErrCodeMsg = 14;
+//        PRINT_WARNING("DBSCAN没有聚类，无法提取标记位置\n");
+        return;
+    }
+
+    unsigned char byBestIdx = pstDbscan->byBestCluster;
+    unsigned char byClusterSize = byGetLightClusterSize(pstDbscan, byBestIdx);
+
+//    PRINT_INFO("DBSCAN聚类结果: 簇数=%d, 最佳簇索引=%d, 最佳簇大小=%d\n",
+//               pstDbscan->byClusterCount, byBestIdx, byClusterSize);
+
+    if (byClusterSize < 2) {
+        pstResult->cFound = 0;
+        byErrCodeMsg = 15;
+       // PRINT_WARNING("最佳簇大小=%d，太小不可靠\n", byClusterSize);
+        return;
+    }
+
+    // 获取基准位置
+    short nBasePoint = nGetLightClusterCenter(pstDbscan, byBestIdx);
+//    PRINT_INFO("DBSCAN聚类中心位置: %d\n", nBasePoint);
+
+    // 构建理论上的标记位置
+    short anTempPos[5];
+    vBuildMarkPositions(pstTemplate, nBasePoint, anTempPos);
+
+    // 打印理论位置
+//    for (unsigned char byIdx = 0; byIdx < pstTemplate->bySignalCount; byIdx++) {
+//        PRINT_INFO("理论位置[%d]: 位置=%d, 期望半径=%d\n",
+//                   byIdx, anTempPos[byIdx], pstTemplate->anRadii[byIdx]);
+//    }
+
+    // 获取检测到的信号列表
+    const SignalListT* pstSignals = &pstDetector->stSignalList;
+//    PRINT_INFO("实际检测到的信号数量: %d\n", pstSignals->byCount);
+
+    // 标记信号是否已被使用
+    //unsigned char abyUsedSignals[MAX_SIGNALS] = {0};
+
+    // 为每个理论位置查找最近的实际信号
+    unsigned char byMatchedCount = 0;
+
+    for (unsigned char byPosIdx = 0; byPosIdx < pstTemplate->bySignalCount; byPosIdx++) {
+        short nTargetPos = anTempPos[byPosIdx];
+        short nRadius = pstTemplate->anRadii[byPosIdx];
+        short nBestDist = MAX_ROUND_POINT;
+        short nBestIdx = -1;
+
+//        PRINT_DEBUG("查找理论位置[%d]的匹配信号: 目标位置=%d, 期望半径=%d\n",
+//                   byPosIdx, nTargetPos, nRadius);
+
+        // 查找最近的未使用信号
+        for (unsigned char bySigIdx = 0; bySigIdx < pstSignals->byCount; bySigIdx++) {
+            if (!pstSignals->astSignals[bySigIdx].bValid) continue;
+           // if (abyUsedSignals[bySigIdx]) continue;
+
+            const SignalInfoT* pstSignal = &pstSignals->astSignals[bySigIdx];
+            short nDist = nCircularDistance(nTargetPos, pstSignal->nCenter);
+
+            // 检查距离是否在合理范围内
+            if (nDist <= nRadius * 3) {
+                if (nDist < nBestDist) {
+                    nBestDist = nDist;
+                    nBestIdx = bySigIdx;
+
+//                    PRINT_DEBUG("  候选信号[%d]: 中心=%d, 距离=%d\n",
+//                              bySigIdx, pstSignal->nCenter, nDist);
+                }
+            }
+        }
+
+        if (nBestIdx >= 0) {
+            // 使用找到的信号
+            const SignalInfoT* pstSignal = &pstSignals->astSignals[nBestIdx];
+            pstResult->anLabelPos[byPosIdx] = pstSignal->nCenter;
+            pstResult->anLabelRadius[byPosIdx] = pstSignal->nRadius;
+            pstResult->abySignalMinValue[byPosIdx]  = pstSignal->bySignalMinValue;
+            pstResult->anSignalMinValueId[byPosIdx]  =pstSignal->nSignalMinValueId;
+           // abyUsedSignals[nBestIdx] = 1;
+            byMatchedCount++;
+//
+//            PRINT_INFO("理论位置[%d] -> 实际信号[%d]: 中心=%d, 半径=%d, 距离=%d\n",
+//                      byPosIdx, nBestIdx, pstSignal->nCenter, pstSignal->nRadius, nBestDist);
+        } else {
+            // 没有找到匹配信号，使用理论位置
+            pstResult->anLabelPos[byPosIdx] = anTempPos[byPosIdx];
+            pstResult->anLabelRadius[byPosIdx] = pstTemplate->anRadii[byPosIdx];
+            pstResult->abySignalMinValue[byPosIdx]  = 255;
+            pstResult->anSignalMinValueId[byPosIdx]  = anTempPos[byPosIdx];
+
+//            PRINT_WARNING("理论位置[%d] 未找到匹配信号，使用理论位置=%d\n",
+//                         byPosIdx, anTempPos[byPosIdx]);
+        }
+    }
+
+    //检查匹配数量
+    unsigned char byMinRequired = pstTemplate->bySignalCount * 0.5f;  // 至少50%匹配
+    if (byMatchedCount >= byMinRequired) {
+        pstResult->cFound = 1;
+//        PRINT_INFO("标记提取成功: 匹配信号数=%d/%d\n",
+//                  byMatchedCount, pstTemplate->bySignalCount);
+    } else {
+        pstResult->cFound = 0;
+        byErrCodeMsg = 16;
+//        PRINT_WARNING("匹配信号数不足: %d/%d (需要至少%d)\n",
+//                     byMatchedCount, pstTemplate->bySignalCount, byMinRequired);
+    }
+}
+
+/************************************************** */
+
+///**
+// * @brief 计算两个区间的重叠长度
+// * @param nStart1 区间1起始
+// * @param nEnd1 区间1结束
+// * @param nStart2 区间2起始
+// * @param nEnd2 区间2结束
+// * @return 重叠长度
+// * @note 考虑环形缓冲区
+// */
+//static inline short nCalculateIntervalOverlap(short nStart1, short nEnd1,
+//                                              short nStart2, short nEnd2)
+//{
+//    // 确保起始点小于等于结束点（调整环形）
+//    if (nStart1 > nEnd1)
+//    {
+//        nEnd1 += MAX_ROUND_POINT;
+//    }
+//    if (nStart2 > nEnd2)
+//    {
+//        nEnd2 += MAX_ROUND_POINT;
+//    }
+//
+//    // 计算重叠
+//    short nOverlapStart = (nStart1 > nStart2) ? nStart1 : nStart2;
+//    short nOverlapEnd = (nEnd1 < nEnd2) ? nEnd1 : nEnd2;
+//
+//    if (nOverlapStart <= nOverlapEnd)
+//    {
+//        short nOverlap = nOverlapEnd - nOverlapStart + 1;
+//        // 如果重叠跨越了环形边界，调整
+//        if (nOverlapStart >= MAX_ROUND_POINT || nOverlapEnd >= MAX_ROUND_POINT)
+//        {
+//            nOverlap = nOverlap; // 已经调整
+//        }
+//        return nOverlap;
+//    }
+//
+//    return 0; // 无重叠
+//}
+//
+///**
+// * @brief 计算环形区间重叠
+// * @param nCenter 中心位置
+// * @param nRadius 半径
+// * @param nStart 区间起始
+// * @param nEnd 区间结束
+// * @return 重叠长度
+// */
+//static inline short nCalculateCircularOverlap(short nCenter, short nRadius,
+//                                              short nStart, short nEnd)
+//{
+//    // 计算模板信号区间
+//    short nTmplStart = (nCenter - nRadius + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+//    short nTmplEnd = (nCenter + nRadius) % MAX_ROUND_POINT;
+//
+//    // 计算重叠
+//    if (nTmplStart <= nTmplEnd)
+//    {
+//        // 正常区间
+//        if (nStart <= nEnd)
+//        {
+//            // 两个都是正常区间
+//            return nCalculateIntervalOverlap(nTmplStart, nTmplEnd, nStart, nEnd);
+//        }
+//        else
+//        {
+//            // 检测信号跨越边界
+//            short nOverlap1 = nCalculateIntervalOverlap(nTmplStart, nTmplEnd, nStart, MAX_ROUND_POINT - 1);
+//            short nOverlap2 = nCalculateIntervalOverlap(nTmplStart, nTmplEnd, 0, nEnd);
+//            return nOverlap1 + nOverlap2;
+//        }
+//    }
+//    else
+//    {
+//        // 模板信号跨越边界
+//        if (nStart <= nEnd)
+//        {
+//            // 检测信号正常区间
+//            short nOverlap1 = nCalculateIntervalOverlap(nTmplStart, MAX_ROUND_POINT - 1, nStart, nEnd);
+//            short nOverlap2 = nCalculateIntervalOverlap(0, nTmplEnd, nStart, nEnd);
+//            return nOverlap1 + nOverlap2;
+//        }
+//        else
+//        {
+//            // 两个都跨越边界
+//            short nOverlap1 = nCalculateIntervalOverlap(nTmplStart, MAX_ROUND_POINT - 1, nStart, MAX_ROUND_POINT - 1);
+//            short nOverlap2 = nCalculateIntervalOverlap(0, nTmplEnd, 0, nEnd);
+//            return nOverlap1 + nOverlap2;
+//        }
+//    }
+//}
+
+
+/****************@start@*******************************************************************/
+/**
+ * @brief 计算单个模板信号与检测信号的重叠度
+ * @param nTmplCenter 模板信号中心
+ * @param nTmplRadius 模板信号半径
+ * @param nOffset 偏移量
+ * @param pstSignals 检测到的信号列表
+ * @return 重叠像素数
+ */
+short nCalculateSingleSignalOverlap(short nTmplCenter, short nTmplRadius,
+                                    short nOffset, const SignalListT* pstSignals) {
+    // 计算对齐后的模板信号区间
+    short nAlignedCenter = (nTmplCenter + nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+    short nTmplStart = (nAlignedCenter - nTmplRadius + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+    short nTmplEnd = (nAlignedCenter + nTmplRadius) % MAX_ROUND_POINT;
+
+    short nTotalOverlap = 0;
+
+    // 遍历所有检测到的信号
+    for (unsigned char bySigIdx = 0; bySigIdx < pstSignals->byCount; bySigIdx++) {
+        if (!pstSignals->astSignals[bySigIdx].bValid) continue;
+
+        const SignalInfoT* pstDetSignal = &pstSignals->astSignals[bySigIdx];
+
+        // 计算检测信号区间
+        short nDetStart = pstDetSignal->nStart;
+        short nDetEnd = pstDetSignal->nEnd;
+        short nDetWidth = pstDetSignal->nWidth;
+
+        // 计算重叠
+        short nOverlap = 0;
+
+        if (nTmplStart <= nTmplEnd) {
+            // 模板信号是正常区间
+            if (nDetStart <= nDetEnd) {
+                // 检测信号也是正常区间
+                short nOverlapStart = (nTmplStart > nDetStart) ? nTmplStart : nDetStart;
+                short nOverlapEnd = (nTmplEnd < nDetEnd) ? nTmplEnd : nDetEnd;
+                nOverlap = (nOverlapStart <= nOverlapEnd) ? (nOverlapEnd - nOverlapStart + 1) : 0;
+            } else {
+                // 检测信号跨越边界
+                // 第一部分：[nDetStart, MAX_ROUND_POINT-1]
+                short nOverlapStart1 = (nTmplStart > nDetStart) ? nTmplStart : nDetStart;
+                short nOverlapEnd1 = (nTmplEnd < MAX_ROUND_POINT-1) ? nTmplEnd : MAX_ROUND_POINT-1;
+                short nOverlap1 = (nOverlapStart1 <= nOverlapEnd1) ? (nOverlapEnd1 - nOverlapStart1 + 1) : 0;
+
+                // 第二部分：[0, nDetEnd]
+                short nOverlapStart2 = (nTmplStart > 0) ? nTmplStart : 0;
+                short nOverlapEnd2 = (nTmplEnd < nDetEnd) ? nTmplEnd : nDetEnd;
+                short nOverlap2 = (nOverlapStart2 <= nOverlapEnd2) ? (nOverlapEnd2 - nOverlapStart2 + 1) : 0;
+
+                nOverlap = nOverlap1 + nOverlap2;
+            }
+        } else {
+            // 模板信号跨越边界
+            if (nDetStart <= nDetEnd) {
+                // 检测信号是正常区间
+                // 第一部分：[nTmplStart, MAX_ROUND_POINT-1]
+                short nOverlapStart1 = (nTmplStart > nDetStart) ? nTmplStart : nDetStart;
+                short nOverlapEnd1 = (MAX_ROUND_POINT-1 < nDetEnd) ? MAX_ROUND_POINT-1 : nDetEnd;
+                short nOverlap1 = (nOverlapStart1 <= nOverlapEnd1) ? (nOverlapEnd1 - nOverlapStart1 + 1) : 0;
+
+                // 第二部分：[0, nTmplEnd]
+                short nOverlapStart2 = (0 > nDetStart) ? 0 : nDetStart;
+                short nOverlapEnd2 = (nTmplEnd < nDetEnd) ? nTmplEnd : nDetEnd;
+                short nOverlap2 = (nOverlapStart2 <= nOverlapEnd2) ? (nOverlapEnd2 - nOverlapStart2 + 1) : 0;
+
+                nOverlap = nOverlap1 + nOverlap2;
+            } else {
+                // 两个都跨越边界
+                // 需要更复杂的计算，简化处理：取两个信号的并集
+                nOverlap = (nDetWidth < (2 * nTmplRadius + 1)) ? nDetWidth : (2 * nTmplRadius + 1);
+            }
+        }
+
+        // 限制重叠不超过模板信号宽度
+        short nTmplWidth = 2 * nTmplRadius + 1;
+        nOverlap = (nOverlap > nTmplWidth) ? nTmplWidth : nOverlap;
+
+        nTotalOverlap += nOverlap;
+    }
+
+    return nTotalOverlap;
+}
+
+/**
+ * @brief 计算模板整体重叠度
+ * @param pstTemplate 模板指针
+ * @param nOffset 对齐偏移量
+ * @param pstSignals 检测信号列表
+ * @return 重叠度分数（0.0-1.0）
+ */
+float fCalculateTemplateOverallOverlap(const MarkTemplateT* pstTemplate,
+                                      short nOffset,
+                                      const SignalListT* pstSignals) {
+    float fTotalScore = 0.0f;
+    unsigned char byValidCount = 0;
+
+    for (unsigned char byTmplIdx = 0; byTmplIdx < pstTemplate->bySignalCount; byTmplIdx++) {
+        // 计算对齐后的模板信号中心
+        short nAlignedCenter;
+        nAlignedCenter = (pstTemplate->anMidPoints[byTmplIdx] + nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+        // 计算单个信号重叠度
+        short nOverlap = nCalculateSingleSignalOverlap(
+            nAlignedCenter,
+            pstTemplate->anRadii[byTmplIdx],
+            0,  // 不额外偏移
+            pstSignals
+        );
+
+        // 计算信号分数
+        short nTmplWidth = 2 * pstTemplate->anRadii[byTmplIdx] + 1;
+        float fSignalScore = 0.0f;
+
+        if (nTmplWidth > 0) {
+            fSignalScore = (float)nOverlap / nTmplWidth;
+
+            // 应用百分比权重
+            fSignalScore *= pstTemplate->abyPercentages[byTmplIdx] / 100.0f;
+        }
+
+        fTotalScore += fSignalScore;
+        byValidCount++;
+//
+//        PRINT_DEBUG("模板信号%d: 对齐中心=%d, 半径=%d, 宽度=%d, 重叠=%d, 分数=%.3f\n",
+//                   byTmplIdx, nAlignedCenter, pstTemplate->anRadii[byTmplIdx],
+//                   nTmplWidth, nOverlap, fSignalScore);
+    }
+
+    if (byValidCount > 0) {
+        float fAvgScore = fTotalScore / pstTemplate->bySignalCount;
+      //  PRINT_DEBUG("模板整体重叠度: 偏移=%d, 平均分数=%.3f\n", nOffset, fAvgScore);
+        return fAvgScore;
+    }
+
+    return 0.0f;
+}
+
+
+/**
+ * @brief 执行模板匹配
+ * @param pstDetector 检测器指针
+ * @param pstTemplate 模板指针
+ * @param pstDbscan DBSCAN指针
+ * @note 按照您的描述：将模板每个信号与每个检测信号对齐，计算最佳匹配
+ */
+void vPerformTemplateLightMatchingEx(const SignalDetectorT* pstDetector,
+                               const MarkTemplateT* pstTemplate,
+							   LightDbscanT* pstDbscan) {
+    const SignalListT* pstSignals = &pstDetector->stSignalList;
+
+     // 保存候选匹配
+    typedef struct {
+        short nAlignedBasePos;
+        float fScore;
+        short nOffset;
+    } CandidateMatchT;
+
+    CandidateMatchT astCandidates[60];  // 假设最大候选数
+    unsigned char byCandidateCount = 0;
+   // PRINT_INFO("开始模板匹配: 模板信号数=%d, 检测信号数=%d\n",
+   //            pstTemplate->bySignalCount, pstSignals->byCount);
+
+    // 遍历模板中的每个信号（作为对齐基准）
+    for (unsigned char byTmplBaseIdx = 0; byTmplBaseIdx < pstTemplate->bySignalCount; byTmplBaseIdx++) {
+//        float fBestScore = 0.0f;
+//        short nBestOffset = 0;
+//        short nBestAlignedBasePos = 0;
+        float fScore = 0.0f;
+        // 遍历每个检测到的信号
+        for (unsigned char byDetIdx = 0; byDetIdx < pstSignals->byCount; byDetIdx++) {
+            if (!pstSignals->astSignals[byDetIdx].bValid) continue;
+
+            // 计算对齐偏移
+            short nDetCenter = pstSignals->astSignals[byDetIdx].nCenter;
+            short nOffset;
+
+            nOffset = nDetCenter - pstTemplate->anMidPoints[byTmplBaseIdx];
+            // 计算对齐后模板第一个信号的位置
+            short nAlignedBasePos;
+            nAlignedBasePos = (pstTemplate->anMidPoints[0] + nOffset + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+            // 计算整体重叠度
+            fScore = fCalculateTemplateOverallOverlap(pstTemplate, nOffset, pstSignals);
+
+             // 保存候选
+            if (fScore > 0.3f) {  // 较低的初筛阈值
+                astCandidates[byCandidateCount].nAlignedBasePos = nAlignedBasePos;
+                astCandidates[byCandidateCount].fScore = fScore;
+                astCandidates[byCandidateCount].nOffset = nOffset;
+                byCandidateCount++;
+
+                if (byCandidateCount >= 60) break;  // 防止溢出
+            }
+        }
+    }
+    // 第二阶段：自适应阈值筛选
+     float fThreshold = 0.0f;
+	 if (byCandidateCount > 0)
+	 {
+		 // 方法3: 均值+标准差阈值
+		 float fSum = 0.0f;
+		 for (int i = 0; i < byCandidateCount; i++) {
+			 fSum += astCandidates[i].fScore;
+		 }
+		 float fMean = fSum / byCandidateCount;
+
+		 float fVariance = 0.0f;
+		 for (int i = 0; i < byCandidateCount; i++) {
+			 float fDiff = astCandidates[i].fScore - fMean;
+			 fVariance += fDiff * fDiff;
+		 }
+		 fVariance /= byCandidateCount;
+		 float fStdDev = sqrtf(fVariance);
+		 float fFinalThreshold2;
+		 if (fStdDev < 0.05f)
+		 {
+			 fFinalThreshold2 = fMean*0.9;
+		 }
+		 else
+		 {
+			 fFinalThreshold2 = fMean + 0.1f * fStdDev;
+		 }
+
+		 // float fFinalThreshold2 = fMean + 0.1f * fStdDev;  // 可调节系数
+		 fThreshold=fFinalThreshold2;
+		// PRINT_INFO("=============均值==%.3f，标准差=%.3f，最终阈值=%.3f\n",fMean,fStdDev,fThreshold);
+	 }
+    // 第三阶段：添加符合条件的候选
+    for (int i = 0; i < byCandidateCount; i++) {
+        if (astCandidates[i].fScore >= fThreshold) {
+        	bAddPointToLightDbscan(pstDbscan, astCandidates[i].nAlignedBasePos, astCandidates[i].fScore);
+//            PRINT_INFO("添加候选: 位置=%d, 分数=%.3f, 阈值=%.3f\n",
+//                        astCandidates[i].nAlignedBasePos, astCandidates[i].fScore, fThreshold);
+        }
+    }
+}
+
+/**
+ * @brief 检测标记（使用新的模板匹配逻辑）
+ * @param pstDetector 检测器指针
+ * @param pabyData 图像数据
+ * @param pstTemplate 模板指针
+ * @param pstResult 结果指针
+ */
+
+#ifndef DEBUG_Mode
+void vDetectMarksWithLightNewMatching(const SignalDetectorT* pstDetector,
+                                //const unsigned char* pabyData,
+                                MarkTemplateT* pstTemplate,
+                                MarkTemplateT* pstResult) {
+    memcpy(pstResult, pstTemplate, sizeof(MarkTemplateT));
+    pstResult->cFound = 0;
+
+    //PRINT_INFO("开始检测标记，颜色ID=%d，使用新的模板匹配逻辑\n", pstTemplate->byColorId);
+
+    LightDbscanT stDbscan;
+    vInitLightDbscan(pstDetector->fGirth,&stDbscan);
+
+    // 执行模板匹配
+    vPerformTemplateLightMatchingEx(pstDetector, pstTemplate, &stDbscan);
+
+    //PRINT_INFO("模板匹配完成，DBSCAN节点数=%d\n", stDbscan.byNodeCount);
+
+    // 执行DBSCAN聚类
+    if (stDbscan.byNodeCount >= 2)
+    {
+    	vPerformLightDbscanClustering(&stDbscan);
+
+        // 提取标记位置
+        if (stDbscan.byClusterCount > 0)
+        {
+        	vExtractMarksFromLightClusterSimple(&stDbscan, pstTemplate, pstResult, pstDetector);
+
+            if (pstResult->cFound)
+            {
+//                PRINT_INFO("成功找到标记\n");
+            }
+            else
+            {
+                byErrCodeMsg = 16;//DBSCAN聚类成功但未提取到标记位置
+                //PRINT_WARNING("DBSCAN聚类成功但未提取到标记位置\n");
+            }
+        }
+        else
+        {
+            byErrCodeMsg = 17;//DBSCAN聚类失败，没有找到有效簇
+            //PRINT_WARNING("DBSCAN聚类失败，没有找到有效簇\n");
+        }
+    }
+    else
+    {
+        byErrCodeMsg = 18;//DBSCAN节点数不足
+       // PRINT_WARNING("DBSCAN节点数不足: %d\n", stDbscan.byNodeCount);
+    }
+}
+
+#else
+void vDetectMarksWithLightNewMatching(LightDbscanT* pstDbscan,
+								const SignalDetectorT* pstDetector,
+                                MarkTemplateT* pstTemplate,
+                                MarkTemplateT* pstResult) {
+    memcpy(pstResult, pstTemplate, sizeof(MarkTemplateT));
+    pstResult->cFound = 0;
+
+    //PRINT_INFO("开始检测标记，颜色ID=%d，使用新的模板匹配逻辑\n", pstTemplate->byColorId);
+
+
+    vInitLightDbscan(pstDetector->fGirth,pstDbscan);
+
+    // 执行模板匹配
+    vPerformTemplateLightMatchingEx(pstDetector, pstTemplate, pstDbscan);
+
+    //PRINT_INFO("模板匹配完成，DBSCAN节点数=%d\n", stDbscan.byNodeCount);
+
+    // 执行DBSCAN聚类
+    if (pstDbscan->byNodeCount >= 2)
+    {
+    	vPerformLightDbscanClustering(pstDbscan);
+
+        // 提取标记位置
+        if (pstDbscan->byClusterCount > 0)
+        {
+        	vExtractMarksFromLightClusterSimple(pstDbscan, pstTemplate, pstResult, pstDetector);
+
+            if (pstResult->cFound)
+            {
+//                PRINT_INFO("成功找到标记\n");
+            }
+            else
+            {
+                byErrCodeMsg = 16;//DBSCAN聚类成功但未提取到标记位置
+                //PRINT_WARNING("DBSCAN聚类成功但未提取到标记位置\n");
+            }
+        }
+        else
+        {
+            byErrCodeMsg = 17;//DBSCAN聚类失败，没有找到有效簇
+            //PRINT_WARNING("DBSCAN聚类失败，没有找到有效簇\n");
+        }
+    }
+    else
+    {
+        byErrCodeMsg = 18;//DBSCAN节点数不足
+       // PRINT_WARNING("DBSCAN节点数不足: %d\n", stDbscan.byNodeCount);
+    }
+}
+
+#endif
+
+
+/****************@end@*******************************************************************/
+/**
+ * @brief 从MATLAB输入创建模板
+ * @param pstInput MATLAB输入结构
+ * @param bIsCurrent 是否为当前颜色
+ * @param fGirth 版周
+ * @param pstTemplate 输出模板
+ */
+void vCreateTemplateFromMatlabInputFixed(const MatlabInputT *pstInput,
+                                         unsigned char bIsCurrent,
+                                         float fGirth,
+                                         MarkTemplateT *pstTemplate,
+                                         unsigned char byAmendmentTemp)
+{
+    if (bIsCurrent)
+    { // 当前颜色
+        vInitMarkTemplate(pstTemplate, pstInput->byCurMarkType,
+                          pstInput->byCurColorId,
+                          pstInput->fCurSimilarityThreshold);
+
+        for (unsigned char byIdx = 0; byIdx < pstInput->byCurSignalCount; byIdx++)
+        {
+            short iCurModeMidPoint =pstInput->paiCurModeMidPoint[byIdx];
+            unsigned char byCurModeRadius = pstInput->pabyCurModeRadius[byIdx];
+
+            bAddTemplateSignal(pstTemplate, iCurModeMidPoint, byCurModeRadius,
+                               pstInput->pabyCurPercentages[byIdx],byAmendmentTemp);
+        }
+
+    }
+    else
+    { // 前一个颜色
+        vInitMarkTemplate(pstTemplate, pstInput->byPreMarkType,
+                          pstInput->byPreColorId,
+                          pstInput->fPreSimilarityThreshold);
+
+        for (unsigned char byIdx = 0; byIdx < pstInput->byPreSignalCount; byIdx++)
+        {
+            short iPreModeMidPoint = pstInput->paiPreModeMidPoint[byIdx];
+            unsigned char byPreModeRadius = pstInput->pabyPreModeRadius[byIdx];
+
+            bAddTemplateSignal(pstTemplate, iPreModeMidPoint, byPreModeRadius,
+                               pstInput->pabyPrePercentages[byIdx],byAmendmentTemp);
+        }
+
+    }
+
+    vPrecomputeRelativePositions(pstTemplate);
+
+//    PRINT_INFO("从MATLAB输入创建模板完成: 颜色ID=%d, 信号数=%d\n",
+//              pstTemplate->byColorId, pstTemplate->bySignalCount);
+}
+
+/*
+ * 函数功能：判断索引是否在环形窗口内
+ * 输入参数：
+ *   iIndex - 待判断的索引
+ *   iStart - 窗口起始索引
+ *   iEnd   - 窗口结束索引
+ * 返回值：TRUE(在窗口内)/FALSE(不在窗口内)
+ */
+static uint8_t KS_PointInSet(int16_t iIndex, int16_t iStart, int16_t iEnd)
+{
+    if(iStart <= iEnd)
+    {
+        // 线性窗口：例如 1870-2030，直接判断区间
+        return (iIndex >= iStart && iIndex <= iEnd);
+    }
+    else
+    {
+        // 环形窗口：例如 3900-60，判断 ">=3900 或 <=60"
+        return (iIndex >= iStart || iIndex <= iEnd);
+    }
+}
+
+// 2026.3.30.103646  Yang.zj + 粗采样计算宽度
+/*
+ * 函数功能：色标宽度计算辅助函数
+ * 输入参数：
+ *   pbyRoundData     - 粗采样数据指针(4000个点)
+ *   fBaseline        - 粗采样基线值
+ *   iColorCenter     - 色标中心位置(0-3999)
+ *   iGirth           - 版周
+ *   byMaxValue       - 集合内最大值
+ * 返回值：>=0.0表示宽度值，<0.0表示错误(如-1.0表示参数错误)
+ */
+static float KsColorMarkWidthCalculatebyRS(uint8_t xInclNegative10vSignal, uint8_t* pbyRoundData, float fBaseline,
+                                       uint16_t iColorCenter, float iGirth,
+                                       uint8_t byMaxValue)
+{
+    uint16_t iExtendLen = 0;           // 向前向后延伸的长度
+    uint16_t iStartIndex = 0;          // 点集起始索引
+    uint16_t iEndIndex = 0;            // 点集结束索引
+    float fThreshold = 0.0;           // 阈值(基线+最大值的平均)
+    int16_t iLeftIndex = 0;           // 左边界整数索引
+    int16_t iRightIndex = 0;          // 右边界整数索引
+    float fLeftPos = 0.0;             // 左边界插值后位置
+    float fRightPos = 0.0;            // 右边界插值后位置
+    int16_t iSearchCount = 0;
+    uint8_t xFoundLeft = FALSE, xFoundRight = FALSE;
+    int16_t iLeftIndexPrev = 0, iRightIndexNext = 0;
+    uint8_t byLeftVal = 0, byLeftValPrev = 0, byRightVal = 0, byRightValNext = 0;
+    float fSlope = 0.0;
+    float fResult = 0.0;
+    float fWidthRS = 0.0;
+
+
+	//根据极性处理数据
+	if(xInclNegative10vSignal)//双极性
+	{
+		//byRoundData = RSDATADEAL(pbyRoundData[i]);//双极性数据处理后的值
+	 // 参数检查 (保持不变)
+		if(pbyRoundData == 0 || iGirth <= 0)
+			return 25.5f; // 参数错误 错误码
+
+		if(iColorCenter < 0 || iColorCenter >= MAX_ROUND_POINT)
+			return 25.5f; // 参数错误 错误码
+
+		// 1. 计算延伸长度 (保持不变)
+		if(iGirth != 0)
+			iExtendLen = (uint16_t)((10 * MAX_ROUND_POINT) / iGirth);
+		else
+			iExtendLen = 0;
+
+
+		// 2. 基于中心构建环形窗口
+		iStartIndex = iColorCenter - iExtendLen;
+		iEndIndex = iColorCenter + iExtendLen;
+
+		// 处理环形回绕
+		if(iStartIndex < 0)
+			iStartIndex += MAX_ROUND_POINT;
+		if(iEndIndex >= MAX_ROUND_POINT)
+			iEndIndex -= MAX_ROUND_POINT;
+
+		// 5. 计算阈值 (保持不变)
+		fThreshold = (byMaxValue + fBaseline) / 2.0f;
+
+		// 6. 从最大值位置向左搜索第一个小于阈值的点
+		iLeftIndex = iColorCenter;
+		xFoundLeft = FALSE;
+
+		for(iSearchCount = 0; iSearchCount < (2 * iExtendLen + 1); iSearchCount++)
+		{
+			iLeftIndex--;
+			if(iLeftIndex < 0)
+				iLeftIndex = MAX_ROUND_POINT - 1;
+
+			if(!KS_PointInSet(iLeftIndex, iStartIndex, iEndIndex))
+			{
+				iLeftIndex = (iLeftIndex + 1) % MAX_ROUND_POINT;
+				xFoundLeft = TRUE;
+				break;
+			}
+
+			if(RSDATADEAL(pbyRoundData[iLeftIndex]) < fThreshold)
+			{
+				xFoundLeft = TRUE;
+				break;
+			}
+
+			if(iLeftIndex == iColorCenter)
+			{
+				iLeftIndex = (iLeftIndex + 1) % MAX_ROUND_POINT;
+				break;
+			}
+		}
+
+		if(!xFoundLeft)
+			iLeftIndex = (iStartIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+		// 7. 从最大值位置向右搜索第一个小于阈值的点
+		iRightIndex = iColorCenter;
+		xFoundRight = FALSE;
+
+		for(iSearchCount = 0; iSearchCount < (2 * iExtendLen + 1); iSearchCount++)
+		{
+			iRightIndex++;
+			if(iRightIndex >= MAX_ROUND_POINT)
+				iRightIndex = 0;
+
+			if(!KS_PointInSet(iRightIndex, iStartIndex, iEndIndex))
+			{
+				iRightIndex = (iRightIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				xFoundRight = TRUE;
+				break;
+			}
+
+			if(RSDATADEAL(pbyRoundData[iRightIndex]) < fThreshold)
+			{
+				xFoundRight = TRUE;
+				break;
+			}
+
+			if(iRightIndex == iColorCenter)
+			{
+				iRightIndex = (iRightIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				break;
+			}
+		}
+
+		if(!xFoundRight)
+			iRightIndex = (iEndIndex + 1) % MAX_ROUND_POINT;
+
+		// 8. 对左边界进行线性插值
+		iLeftIndexPrev = (iLeftIndex + 1) % MAX_ROUND_POINT;
+		byLeftVal = RSDATADEAL(pbyRoundData[iLeftIndex]);
+		byLeftValPrev = RSDATADEAL(pbyRoundData[iLeftIndexPrev]);
+
+		if(byLeftValPrev > byLeftVal)
+		{
+			fSlope = (float)(byLeftValPrev - byLeftVal);
+			fLeftPos = (float)iLeftIndex + (fThreshold - byLeftVal) / fSlope;
+		}
+		else
+		{
+			fLeftPos = (float)iLeftIndex;
+		}
+
+		// 9. 对右边界进行线性插值
+		iRightIndexNext = (iRightIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+		byRightVal = RSDATADEAL(pbyRoundData[iRightIndex]);
+		byRightValNext = RSDATADEAL(pbyRoundData[iRightIndexNext]);
+
+		if(byRightValNext > byRightVal)
+		{
+			fSlope = (float)(byRightValNext - byRightVal);
+			fRightPos = (float)iRightIndex - (fThreshold - byRightVal) / fSlope;
+		}
+		else
+		{
+			fRightPos = (float)iRightIndex;
+		}
+
+		// 10. 计算宽度
+		if(fRightPos >= fLeftPos)
+		{
+			fResult = fRightPos - fLeftPos;
+		}
+		else
+		{
+			fResult = (MAX_ROUND_POINT - fLeftPos) + fRightPos;
+		}
+		fWidthRS = fResult * iGirth / MAX_ROUND_POINT;
+		if (fWidthRS == 25.5)
+			fWidthRS = 25.4;//25.5作为错误码上传
+		return fWidthRS;
+	}
+	else//单极性
+	{
+	//	byRoundData = pbyRoundData[i];//自己的值
+	 // 参数检查 (保持不变)
+		if(pbyRoundData == 0 || iGirth <= 0)
+			return 25.5f; // 参数错误 错误码
+
+		if(iColorCenter < 0 || iColorCenter >= MAX_ROUND_POINT)
+			return 25.5f; // 参数错误 错误码
+
+		// 1. 计算延伸长度 (保持不变)
+		if(iGirth != 0)
+			iExtendLen = (uint16_t)((10 * MAX_ROUND_POINT) / iGirth);
+		else
+			iExtendLen = 0;
+
+
+		// 2. 基于中心构建环形窗口
+		iStartIndex = iColorCenter - iExtendLen;
+		iEndIndex = iColorCenter + iExtendLen;
+
+		// 处理环形回绕
+		if(iStartIndex < 0)
+			iStartIndex += MAX_ROUND_POINT;
+		if(iEndIndex >= MAX_ROUND_POINT)
+			iEndIndex -= MAX_ROUND_POINT;
+
+		// 5. 计算阈值 (保持不变)
+		fThreshold = (byMaxValue + fBaseline) / 2.0f;
+
+		// 6. 从最大值位置向左搜索第一个小于阈值的点
+		iLeftIndex = iColorCenter;
+		xFoundLeft = FALSE;
+
+		for(iSearchCount = 0; iSearchCount < (2 * iExtendLen + 1); iSearchCount++)
+		{
+			iLeftIndex--;
+			if(iLeftIndex < 0)
+				iLeftIndex = MAX_ROUND_POINT - 1;
+
+			if(!KS_PointInSet(iLeftIndex, iStartIndex, iEndIndex))
+			{
+				iLeftIndex = (iLeftIndex + 1) % MAX_ROUND_POINT;
+				xFoundLeft = TRUE;
+				break;
+			}
+
+			if(pbyRoundData[iLeftIndex] < fThreshold)
+			{
+				xFoundLeft = TRUE;
+				break;
+			}
+
+			if(iLeftIndex == iColorCenter)
+			{
+				iLeftIndex = (iLeftIndex + 1) % MAX_ROUND_POINT;
+				break;
+			}
+		}
+
+		if(!xFoundLeft)
+			iLeftIndex = (iStartIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+
+		// 7. 从最大值位置向右搜索第一个小于阈值的点
+		iRightIndex = iColorCenter;
+		xFoundRight = FALSE;
+
+		for(iSearchCount = 0; iSearchCount < (2 * iExtendLen + 1); iSearchCount++)
+		{
+			iRightIndex++;
+			if(iRightIndex >= MAX_ROUND_POINT)
+				iRightIndex = 0;
+
+			if(!KS_PointInSet(iRightIndex, iStartIndex, iEndIndex))
+			{
+				iRightIndex = (iRightIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				xFoundRight = TRUE;
+				break;
+			}
+
+			if(pbyRoundData[iRightIndex] < fThreshold)
+			{
+				xFoundRight = TRUE;
+				break;
+			}
+
+			if(iRightIndex == iColorCenter)
+			{
+				iRightIndex = (iRightIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+				break;
+			}
+		}
+
+		if(!xFoundRight)
+			iRightIndex = (iEndIndex + 1) % MAX_ROUND_POINT;
+
+		// 8. 对左边界进行线性插值
+		iLeftIndexPrev = (iLeftIndex + 1) % MAX_ROUND_POINT;
+		byLeftVal = pbyRoundData[iLeftIndex];
+		byLeftValPrev = pbyRoundData[iLeftIndexPrev];
+
+		if(byLeftValPrev > byLeftVal)
+		{
+			fSlope = (float)(byLeftValPrev - byLeftVal);
+			fLeftPos = (float)iLeftIndex + (fThreshold - byLeftVal) / fSlope;
+		}
+		else
+		{
+			fLeftPos = (float)iLeftIndex;
+		}
+
+		// 9. 对右边界进行线性插值
+		iRightIndexNext = (iRightIndex - 1 + MAX_ROUND_POINT) % MAX_ROUND_POINT;
+		byRightVal = pbyRoundData[iRightIndex];
+		byRightValNext = pbyRoundData[iRightIndexNext];
+
+		if(byRightValNext > byRightVal)
+		{
+			fSlope = (float)(byRightValNext - byRightVal);
+			fRightPos = (float)iRightIndex - (fThreshold - byRightVal) / fSlope;
+		}
+		else
+		{
+			fRightPos = (float)iRightIndex;
+		}
+
+		// 10. 计算宽度
+		if(fRightPos >= fLeftPos)
+		{
+			fResult = fRightPos - fLeftPos;
+		}
+		else
+		{
+			fResult = (MAX_ROUND_POINT - fLeftPos) + fRightPos;
+		}
+		fWidthRS = fResult * iGirth / MAX_ROUND_POINT;
+		if (fWidthRS == 25.5)
+			fWidthRS = 25.4;//25.5作为错误码上传
+		return fWidthRS;
+	}
+
+}
+
+//// 定义线段数量
+/**
+ * @brief 主MATLAB接口函数
+ * @param pstInput MATLAB输入参数
+ * @param pstOutput MATLAB输出结果
+ * @return 成功返回1，失败返回0
+ */
+int nMainMatlabInterfaceFixed_New(const MatlabInputT *pstInput, MatlabOutputT *pstOutput ,StAxisParam *i_pstStAxisParam,BYTE byArcSensorType)
+{
+   // PRINT_INFO("========== 开始MATLAB接口处理 ==========\n");
+	if ( pstInput == 0 || pstOutput == 0 || i_pstStAxisParam == 0)
+	{
+		i_pstStAxisParam->iError_Msg =201; //指针错误
+		return 0;
+	}
+	static BYTE byMarkStep = 0;  // 状态机控制
+//	static BYTE byErrorMark_Msg=0;//错误码
+	static MarkTemplateT stPreTemplate = {0}; // 创建当前颜色模板
+	static MarkTemplateT stCurTemplate = {0}; // 创建前一个颜色模板
+	static MarkTemplateT stCurResult = {0};
+	static MarkTemplateT stPreResult = {0}; // 检测前一个颜色标记
+	static SignalDetectorT stDetector = {0};
+	static BYTE xPreFlag_AutoAdj_En = 0; //记录上一次的值，进行一次初始化
+	//static BYTE xPerLocalAxisRollerDn = 0;//记录一下合压状态
+	static BYTE byFindCurCount=0;//本色寻找次数
+	static BYTE byFindPerCount = 0;//前色寻找次数
+	static BYTE xFind_IDLE = 0;//状态机空闲
+	BYTE xInclNegative10vSignal = GetBit(i_pstStAxisParam->wSwitchRef,9);//获取双极性开关标志
+	if (pstInput==0 || pstOutput==0 || i_pstStAxisParam==0  )return -1;
+	if (i_pstStAxisParam->xFlag_AutoAdj_En == 0)
+	{
+//		byErrCodeMsg=0;
+//		i_pstStAxisParam->byDetectedSignalCount = 0;
+//		i_pstStAxisParam->iError_Msg =0;
+		i_pstStAxisParam->xFlag_FindFirstSuccess = 0;
+//		i_pstStAxisParam->iCurLabelPos = -1;
+		i_pstStAxisParam->xFlag_FindPreSuccess = 0;
+//		i_pstStAxisParam->iPreLabelPos = -1;
+		byMarkStep = 0;
+		xFind_IDLE = 1;
+	}
+	if (xPreFlag_AutoAdj_En == 0 && i_pstStAxisParam->xFlag_AutoAdj_En == 1)
+	{
+		byErrCodeMsg=0;
+		i_pstStAxisParam->byFlag_CommFromMaster =0;
+		i_pstStAxisParam->xFlag_FindCurDone = 0;
+		i_pstStAxisParam->iError_Msg =0;
+		i_pstStAxisParam->xFlag_FindFirstSuccess = 0;
+		i_pstStAxisParam->iCurLabelPos = -1;
+		i_pstStAxisParam->xFlag_FindPreSuccess = 0;
+		i_pstStAxisParam->iPreLabelPos = -1;
+		stDetector.rOuterCoff = i_pstStAxisParam->rOuterCoff;
+		stDetector.rInnerCoff = i_pstStAxisParam->rInnerCoff;
+		stDetector.rSpotWidth = i_pstStAxisParam->rSpotWidth;
+		vInitDualWindowDetector(&stDetector, pstInput->fGirth, pstInput->cMeanOffset,
+							pstInput->nMinWidth, pstInput->nMaxWidth, pstInput->nMaxGap);
+		xFind_IDLE = 1;
+		unsigned char byAmendmentTemp = (unsigned char) sqrt(stDetector.nInnerWindowSize*stDetector.nOuterWindowSize/4.0);
+		vCreateTemplateFromMatlabInputFixed(pstInput, 1, pstInput->fGirth, &stCurTemplate,byAmendmentTemp);
+		vCreateTemplateFromMatlabInputFixed(pstInput, 0, pstInput->fGirth, &stPreTemplate,byAmendmentTemp);
+		 //byErrorMark_Msg =0;
+		 byMarkStep = 2;//等待本色本色合压
+	}
+	xPreFlag_AutoAdj_En = i_pstStAxisParam->xFlag_AutoAdj_En;
+
+	switch (byMarkStep) {
+	case 2:
+		//(i_pstStAxisParam -> xLocalAxisRollerDn ) &&
+		xFind_IDLE = 1;
+		if ( i_pstStAxisParam->xFlag_FindFirstMark  && xFind_IDLE == 1 )
+		{
+			xFind_IDLE = 0;
+			i_pstStAxisParam->xFlag_FindCurDone = 0;
+			//i_pstStAxisParam->xFlag_FindCurDone = 0;//当前色寻找完成
+			pstOutput->uiRSampleCounter = i_pstStAxisParam -> uiRSampleCounter; //初始化一下使用的粗采样计数
+			byFindCurCount=0; //初始化寻找次数
+			//byErrorMark_Msg =0;
+			byMarkStep = 3; // 初始化信号检测器
+		}
+		//主站根据料长计算可以开始寻找前一色，前一色到后寻找前一色 (i_pstStAxisParam -> xLocalAxisRollerDn ) &&
+		if (  i_pstStAxisParam->xFlag_FindPreMark && xFind_IDLE == 1 )
+		{
+			xFind_IDLE = 0;
+			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+			byFindPerCount=0; //初始化寻找次数
+			//byErrorMark_Msg =0;
+			byMarkStep = 13; // 初始化信号检测器
+		}
+		break;
+	case 3: // 初始化信号检测器
+//		if (byFindCurCount > REPEAT_SEARCH_ROUNDS) //已经找3圈了还没找到
+//		{
+//			byErrorMark_Msg =55 ; //本色三次都没有找到
+//			byMarkStep = 8; //跳转到本色寻找失败
+//			break;
+//		}
+		xFind_IDLE = 0;
+		i_pstStAxisParam->xFlag_FindCurDone = 0;
+		if(ABS (pstOutput->uiRSampleCounter - i_pstStAxisParam -> uiRSampleCounter)>1 )//保证使用的是新的一圈的数据，从后续步骤跳转来的，需要等到粗采样计数更新后再来一次
+		{
+			i_pstStAxisParam -> xFlag_FindFirstMark = 1;//开始寻找当前色
+			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+			vInitStateMachine(&(stDetector));
+			//byErrorMark_Msg =0;
+			byMarkStep = 4;
+		}
+		break;
+	case 4: // 处理信号帧
+		 xFind_IDLE = 0;
+		 vProcessDualWindowFrame(&stDetector, pstInput->pabyImageData,byArcSensorType,xInclNegative10vSignal);
+		 i_pstStAxisParam->byDetectedSignalCount = stDetector.stSignalList.byCount;
+		 //信号数量等于最大信号数量,表示信号个数太多了需要重新计算二值信号
+		 if(stDetector.stSignalList.byCount == (MAX_SIGNALS -1))
+		 {
+			 //byErrorMark_Msg =51; //当前色信号数量太多
+			 byMarkStep = 3; //重新初始化重新找标
+		 }
+		 else
+		 {
+			 //byErrorMark_Msg =0;
+			 byMarkStep = 5;//进行模版匹配
+		 }
+		break;
+	case 5: //进行模版匹配
+		xFind_IDLE = 0;
+		static LightDbscanT stDbscanCur={0};
+		vDetectMarksWithLightNewMatching(&stDbscanCur,&stDetector, &stCurTemplate, &stCurResult);
+		byFindCurCount = byFindCurCount + 1;
+		 if ( stCurResult.cFound == 1)
+		 {
+			 //byErrorMark_Msg =0;
+			 byMarkStep = 7; //输出结果
+		 }
+		 else
+		 {
+			 //byErrorMark_Msg =53; //找本色模版匹配没有对上
+			 byMarkStep = 8; ////输出失败结果
+		 }
+		break;
+//	case 6: //无效了，因为现在靠主站反馈来进行确认是否成功
+//		stDetector.anCurLabelPosTemp[1]=stDetector.anCurLabelPosTemp[0];
+//		stDetector.anCurLabelPosTemp[0]=stCurResult.anLabelPos[pstInput->byCurTriangleMarkId];
+//		if (byFindCurCount > 1 &&
+//				abs(nCircularDistance(stDetector.anCurLabelPosTemp[1],stDetector.anCurLabelPosTemp[0]))<
+//				stCurResult.anLabelRadius[pstInput->byCurTriangleMarkId]*2)
+//		{
+//			byErrorMark_Msg =0;
+//			byMarkStep = 7; //输出结果
+//		}
+//		else
+//		{
+//			byErrorMark_Msg =53; //找本色模版匹配没有对上
+//			byMarkStep = 3; ////再来一圈
+//		}
+//
+//		break;
+	case 7://输出本色结果
+
+		//pstOutput->anCurLabelPos = stCurResult.anLabelPos[pstInput->byCurTriangleMarkId];
+		pstOutput->anCurLabelPos =stCurResult.anSignalMinValueId[pstInput->byCurTriangleMarkId];
+		pstOutput->anCurLabelRadius = stCurResult.anLabelRadius[pstInput->byCurTriangleMarkId];
+		//将色标位置替换为极值位置  pstOutput->anCurLabelPos -》stCurResult.anSignalMinValueId[pstInput->byCurTriangleMarkId]
+		float fWidthRS = KsColorMarkWidthCalculatebyRS(xInclNegative10vSignal, pstInput->pabyImageData, pstInput->fBaseLine,
+				stCurResult.anSignalMinValueId[pstInput->byCurTriangleMarkId],pstInput->fGirth,
+				 stCurResult.abySignalMinValue[pstInput->byCurTriangleMarkId]);
+
+		pstOutput->cCurFound = stCurResult.cFound;
+		i_pstStAxisParam->xFlag_FindFirstSuccess = pstOutput->cCurFound;
+		i_pstStAxisParam->iCurLabelPos = pstOutput->anCurLabelPos;
+		i_pstStAxisParam-> byWidthRS =  (unsigned char) (fWidthRS *10);
+		xFind_IDLE = 1;
+		//byErrorMark_Msg =0;
+		//byMarkStep = 2;
+		i_pstStAxisParam->xFlag_FindCurDone = 1;
+		if ( i_pstStAxisParam->xMasterComplete  && xFind_IDLE == 1 )
+		{
+			xFind_IDLE = 0;
+			i_pstStAxisParam->xFlag_FindCurDone = 0;
+			//i_pstStAxisParam->xFlag_FindCurDone = 0;//当前色寻找完成
+			pstOutput->uiRSampleCounter = i_pstStAxisParam -> uiRSampleCounter; //初始化一下使用的粗采样计数
+			byFindCurCount=0; //初始化寻找次数
+			//byErrorMark_Msg =0;
+			byMarkStep = 3; // 初始化信号检测器
+		}
+		if (  i_pstStAxisParam->xFlag_FindPreMark && xFind_IDLE == 1 )
+		{
+			xFind_IDLE = 0;
+			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+			byFindPerCount=0; //初始化寻找次数
+			//byErrorMark_Msg =0;
+			byMarkStep = 13; // 初始化信号检测器
+		}
+		break;
+//		//byMarkStep = 12; //准备寻找前一色
+//		//  && //主站获取信息成功了
+//		if	(GetBit((WORD)i_pstStAxisParam->byFlag_CommFromMaster,6) || i_pstStAxisParam->xCurManuAdjust == 1) //程序或者人工复位再来一圈
+//		{
+//			i_pstStAxisParam->xFlag_FindCurDone = 0;
+//			//byErrorMark_Msg =0;
+//			byMarkStep = 3;//再来一圈
+//		}
+
+		//SignalDetectorT *pstDetector = &stDetector;
+
+	case 8: //本色寻找失败
+		i_pstStAxisParam->xFlag_FindFirstSuccess =0;//必须是1，否则主站不执行左三右六
+		i_pstStAxisParam->iCurLabelPos = -1;
+		i_pstStAxisParam-> byWidthRS =  255 ;//错误宽度
+		xFind_IDLE = 1;
+		i_pstStAxisParam->xFlag_FindCurDone = 1;
+		if ( i_pstStAxisParam->xMasterComplete  && xFind_IDLE == 1 )
+		{
+			xFind_IDLE = 0;
+			i_pstStAxisParam->xFlag_FindCurDone = 0;
+			//i_pstStAxisParam->xFlag_FindCurDone = 0;//当前色寻找完成
+			pstOutput->uiRSampleCounter = i_pstStAxisParam -> uiRSampleCounter; //初始化一下使用的粗采样计数
+			byFindCurCount=0; //初始化寻找次数
+			//byErrorMark_Msg =0;
+			byMarkStep = 3; // 初始化信号检测器
+		}
+		if (  i_pstStAxisParam->xFlag_FindPreMark && xFind_IDLE == 1 )
+		{
+			xFind_IDLE = 0;
+			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+			byFindPerCount=0; //初始化寻找次数
+			//byErrorMark_Msg =0;
+			byMarkStep = 13; // 初始化信号检测器
+		}
+		break;
+
+		// (GetBit((WORD)i_pstStAxisParam->byFlag_CommFromMaster,6) && //主站处理获取信息成功了
+//		 if(GetBit((WORD)i_pstStAxisParam->byFlag_CommFromMaster,6) ||  i_pstStAxisParam->xCurManuAdjust == 1) //程序或者人工复位再来一圈
+//		{
+//			i_pstStAxisParam->xFlag_FindCurDone = 0;
+//			//byErrorMark_Msg =0;
+//			byMarkStep = 3;//再来一圈
+//		}
+//		break;
+//		if (i_pstStAxisParam->xFlag_FindPreMark == 1)//主站根据料长计算可以开始寻找前一色，前一色到后寻找前一色
+//		{
+//			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+//			byFindPerCount=0; //初始化寻找次数
+//			//byErrorMark_Msg =0;
+//			byMarkStep = 13; // 初始化信号检测器
+//		}
+//
+//	case 12://该步无效准备寻找前一色
+//		//粗采样更新时 i_pstStAxisParam -> iARMRunNum==1
+//		if (i_pstStAxisParam->xFlag_FindPreMark == 1 && xDealRsData)//主站根据料长计算可以开始寻找前一色
+//		{
+//			byFindPerCount=0; //初始化寻找次数
+//			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+//			byErrorMark_Msg =0;
+//			byMarkStep = 13; // 初始化信号检测器
+//		}
+//		break;
+	case 13:// 初始化信号检测器
+		xFind_IDLE = 0;
+		if (byFindPerCount > REPEAT_SEARCH_ROUNDS ) //已经找3圈了还没找到
+		{
+			//byErrorMark_Msg =65; //前色寻找失败
+			byMarkStep = 18; //跳转到前色寻找失败
+			break;
+		}
+		if(pstOutput->uiRSampleCounter != i_pstStAxisParam -> uiRSampleCounter)//不论是后续跳转来的，还是第一次进来的，都等一圈
+		{
+			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+			vInitStateMachine(&(stDetector));
+			//byErrorMark_Msg =0;
+			byMarkStep = 14;// 处理信号帧
+		}
+		break;
+	case 14:// 处理信号帧
+		//2026.03.24.225105+对粗采样数据按照极性处理
+		xFind_IDLE = 0;
+		vProcessDualWindowFrame(&stDetector, pstInput->pabyImageData,byArcSensorType,xInclNegative10vSignal);
+		i_pstStAxisParam->byDetectedSignalCount = stDetector.stSignalList.byCount;
+		//信号数量等于最大信号数量,表示信号个数太多了需要重新计算二值信号
+		if(i_pstStAxisParam->byDetectedSignalCount == (MAX_SIGNALS -1))
+		{
+			//byErrorMark_Msg =61; //找前色信号数量太多
+			byMarkStep = 13; //重新初始化重新找标
+		}
+		else
+		{
+			//byErrorMark_Msg =0;
+			 byMarkStep = 15;//进行模版匹配
+		}
+		break;
+	case 15://进行模版匹配前一色
+		xFind_IDLE = 0;
+		static LightDbscanT stDbscanPre={0};
+		vDetectMarksWithLightNewMatching(&stDbscanPre,&stDetector,  &stPreTemplate, &stPreResult);
+		byFindPerCount = byFindPerCount +1;
+		 if ( stPreResult.cFound == 1)
+		 {
+			 //byErrorMark_Msg =0;
+			 byMarkStep = 16; //输出结果
+		 }
+		 else
+		 {
+			 //byErrorMark_Msg =63; //找本色模版匹配没有对上
+			 byMarkStep = 13; //再来一圈
+		 }
+		//byMarkStep = 16; //统计三圈的值
+		break;
+	case 16://统计三圈的值
+		xFind_IDLE = 0;
+		stDetector.anPreLabelPosTemp[1]=stDetector.anPreLabelPosTemp[0];
+		//2026.8.4.185513   索引修改 byCurTriangleMarkId->byPreTriangleMarkId
+		stDetector.anPreLabelPosTemp[0]=stPreResult.anLabelPos[pstInput->byPreTriangleMarkId];
+		if (byFindPerCount > 1 &&
+				ABS(nCircularDistance(stDetector.anPreLabelPosTemp[1],stDetector.anPreLabelPosTemp[0]))<
+				stPreResult.anLabelRadius[pstInput->byPreTriangleMarkId]*2)
+		{
+			//byErrorMark_Msg =0;
+			byMarkStep = 17; //输出结果
+		}
+		else
+		{
+			//byErrorMark_Msg =63; //找本色模版匹配没有对上
+			byMarkStep = 13; ////再来一圈
+		}
+		break;
+	case 17://输出前一色结果
+		pstOutput->anPreLabelPos = stPreResult.anLabelPos[pstInput->byPreTriangleMarkId];
+		pstOutput->anPreLabelRadius = stPreResult.anLabelRadius[pstInput->byPreTriangleMarkId];
+		pstOutput->cPreFound = stPreResult.cFound;
+		i_pstStAxisParam->xFlag_FindPreSuccess = pstOutput->cPreFound;
+		i_pstStAxisParam->iPreLabelPos = pstOutput->anPreLabelPos;
+		xFind_IDLE = 1;
+		byMarkStep = 0; //本色与当前色都找到了，任务完成
+		//byErrorMark_Msg =0; //找前一色未寻找到KCODE或者Taps
+		break;
+	case 18://需要人工干预调整
+		i_pstStAxisParam->xFlag_FindPreSuccess = 1;
+		i_pstStAxisParam->iPreLabelPos = -1;
+		xFind_IDLE = 1;
+		if (i_pstStAxisParam->xPreCurManuAdjust == 1 )
+		{
+			pstOutput->uiRSampleCounter =  i_pstStAxisParam -> uiRSampleCounter; //记录一下当前使用的粗采样计数
+			byFindPerCount = 0;
+			//byErrorMark_Msg =0;
+			byMarkStep = 13;
+		}
+		break;
+	case 0://空闲状态
+		xFind_IDLE = 1;
+		break;
+	default:
+		xFind_IDLE = 1;
+		;
+	}
+	i_pstStAxisParam -> xFind_IDLE =xFind_IDLE;
+	i_pstStAxisParam->byMarkStep =byMarkStep;
+    return 1;
+}
+
+/**
+ * @brief 从顺视角模板生成逆视角模板（直接修改传入指针）
+ *
+ * @param forward_start 顺视角起点数组
+ * @param forward_end 顺视角终点数组
+ * @param reverse_start 输出的逆视角起点数组
+ * @param reverse_end 输出的逆视角终点数组
+ */
+void generate_reverse_template_direct(const float *forward_start, const float *forward_end,
+                                     float *reverse_start, float *reverse_end)
+{
+    // 获取最大坐标值（最后一个线段的终点）
+    float L = forward_end[MARKTEMP_COUNT - 1];
+
+    // 从右向左遍历（d,c,b,a）
+    for (int i = 0; i < MARKTEMP_COUNT; i++) {
+        int reverse_index = i;  // 逆视角索引
+        int forward_index = MARKTEMP_COUNT - 1 - i;  // 顺视角索引
+
+        // 逆视角起点 = L - 顺视角终点
+        reverse_start[reverse_index] = L - forward_end[forward_index];
+
+        // 逆视角终点 = L - 顺视角起点
+        reverse_end[reverse_index] = L - forward_start[forward_index];
+    }
+}
+
+/**
+ * @brief 构建输入的模版
+ * @param bySignalType 色标形式
+ * @param byColorId 色序号
+ * @param pafStartMM 参数数组起点指针
+ * @param pafEndMM 参数数组终点起点指针
+ */
+void vGenerateTestData(unsigned char bySignalType,MatlabInputT *pstInput ,BYTE byColorId,float *pafStartMM, float *pafEndMM)
+{
+
+	if (bySignalType == 1) //目前仅支持北人标
+	{
+		//色序2标准顺序模版 先是Taps 之后是三角标
+		const float af2UStartMM_F[MARKTEMP_COUNT] = {0.0f, 6.0f, 9.0f, 84.5f}; // 毫米单位
+		const float af2UEndMM_F[MARKTEMP_COUNT] = {1.5f, 7.5f, 10.5f, 91.5f};
+		//色序1标准顺序模版 先是Kcode 之后是三角标
+		const float af1UStartMM_F[MARKTEMP_COUNT] = {0.0f, 4.0f, 9.0f, 34.0f}; // 毫米单位
+		const float af1UEndMM_F[MARKTEMP_COUNT] = {2.0f, 7.5f, 14.5f, 41.0f};
+		if (pstInput->byCurMarkType == MARK_ARRANGE_VFOR)//顺序标
+		{
+			if (byColorId > 0)
+			{
+				if (byColorId == 1) //首色
+				{
+					for (int i = 0; i < 3; i++)
+				   {
+						pafStartMM[i] = af1UStartMM_F[i];
+						pafEndMM[i] = af1UEndMM_F[i];
+				   }
+					//pafStartMM[3] = i_pstStAxisParam-> rKcode_Mark_Interval;
+
+				}
+				else //2U
+				{
+					for (int i = 0; i < 4; i++)
+				   {
+						pafStartMM[i] = af2UStartMM_F[i];
+						pafEndMM[i] = af2UEndMM_F[i];
+				   }
+					//其他色序
+					if ( byColorId > 2)
+					{   //顺序只用调整三角标位置
+						pafStartMM[3] = af2UStartMM_F[3]+ (byColorId-2)*20.0;
+						pafEndMM[3] = af2UEndMM_F[3]+ (byColorId-2)*20.0;
+					}
+				}
+			}
+		}
+		else if(pstInput->byCurMarkType == MARK_ARRANGE_VREV)//逆序标
+		{
+			//先计算一下逆序的标准模版
+			//色序2标准逆顺序模版 先是三角标 之后是Taps
+			const float af2UStartMM_R[MARKTEMP_COUNT] = {0.0f, 81.0f,84.0f, 90.0f}; // 毫米单位
+			const float af2UEndMM_R[MARKTEMP_COUNT] = {7.0f, 82.5f, 85.5f, 91.5f};
+			//色序1标准逆顺序模版 先是三角标 之后是Kcode
+			const float af1UStartMM_R[MARKTEMP_COUNT] = {0.0f, 26.5f, 33.5f, 37.0f}; // 毫米单位
+			const float af1UEndMM_R[MARKTEMP_COUNT] = {7.0f, 32.0f, 37.5f, 41.0f};
+			if (byColorId > 0)
+			{
+				if (byColorId == 1) //首色
+				{
+					for (int i = 0; i < 4; i++)
+				   {
+						pafStartMM[i] = af1UStartMM_R[i];
+						pafEndMM[i] = af1UEndMM_R[i];
+				   }
+				}
+				else //2U
+				{
+					for (int i = 0; i < MARKTEMP_COUNT; i++)
+					{
+						pafStartMM[i] = af2UStartMM_R[i];
+						pafEndMM[i] = af2UEndMM_R[i];
+					}
+					//其他色序
+					if ( byColorId > 2)
+					{   //逆序需要调整后续所有特殊标的位置
+						for (int i = 1; i < MARKTEMP_COUNT; i++)
+						{ //+21.5的原因是一个三角标向前移动20mm，另外引导标向后移动1.5mm
+							pafStartMM[i] = af2UStartMM_R[i]+ (byColorId-2)*21.5;
+							pafEndMM[i] = af2UEndMM_R[i]+ (byColorId-2)*21.5;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+
+void vGenerateKESAIData(unsigned char bySignalType,MatlabInputT *pstInput ,BYTE byColorId,float *pafStartMM,
+			float *pafEndMM,unsigned char *pbycentages)
+{
+	pafStartMM[0] = 0; pafEndMM[0] = 8;
+	//byColorId=byColorId;
+	if (bySignalType <=0)
+	{
+		bySignalType=1;
+	}
+	switch (bySignalType)
+	{
+		case 1:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 126.3+(byColorId-1)*3; pafEndMM[2] = 127.3+(byColorId-1)*3;
+			pafStartMM[3] = 182.3+(byColorId-1)*20; pafEndMM[3] = 185.3+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=010; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		case 2:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 126.3+(byColorId-1)*3.5; pafEndMM[2] = 127.3+(byColorId-1)*3.5;
+			pafStartMM[3] = 182.3+(byColorId-1)*20; pafEndMM[3] = 185.3+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		case 4:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 126.3+(byColorId-1)*4; pafEndMM[2] = 127.3+(byColorId-1)*4;
+			pafStartMM[3] = 182.3+(byColorId-1)*20; pafEndMM[3] = 185.3+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		case 5:
+		case 6:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 179.3+(byColorId-1)*20; pafEndMM[2] = 179.3+(byColorId-1)*20;
+			pafStartMM[3] = 179.3+(byColorId-1)*20; pafEndMM[3] = 182.3+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=0; pbycentages[3]=100;
+			break;
+		case 7:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 179.3+(byColorId-1)*20; pafEndMM[2] = 179.3+(byColorId-1)*20;
+			pafStartMM[3] = 179.3+(byColorId-1)*20; pafEndMM[3] = 182.3+(byColorId-1)*20;
+			pbycentages[0]=50; pbycentages[1]=100; pbycentages[2]=0; pbycentages[3]=100;
+			break;
+		case 8:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 182.3+(byColorId-1)*20; pafEndMM[2] = 182.3+(byColorId-1)*20;
+			pafStartMM[3] = 182.3+(byColorId-1)*20; pafEndMM[3] = 185.3+(byColorId-1)*20;
+			pbycentages[0]=50; pbycentages[1]=100; pbycentages[2]=0; pbycentages[3]=100;
+			break;
+		case 9:
+		case 10:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 126.3+(byColorId-1)*0; pafEndMM[2] = 129.3+(byColorId-1)*0;
+			pafStartMM[3] = 182.3+(byColorId-1)*20; pafEndMM[3] = 185.3+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		default:
+			pafStartMM[1] = 57.7+(byColorId-1)*5.5; pafEndMM[1] = 62.3+(byColorId-1)*5.5;
+			pafStartMM[2] = 182.3+(byColorId-1)*0; pafEndMM[2] = 182.3+(byColorId-1)*0;
+			pafStartMM[3] = 182.3+(byColorId-1)*20; pafEndMM[3] = 185.3+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=0; pbycentages[3]=100;
+			break;
+	}
+	if (pstInput->byCurMarkType == MARK_ARRANGE_VFOR)//顺序
+	{
+
+	}
+	else if(pstInput->byCurMarkType == MARK_ARRANGE_VREV)//逆序
+	{
+		float afStartTemp[MARKTEMP_COUNT] = {0}; // 毫米单位
+		float afEndTemp[MARKTEMP_COUNT] = {0};
+		unsigned char abycentages[MARKTEMP_COUNT]={0};
+		for (int i = 0; i < MARKTEMP_COUNT; i++)
+		{
+			afStartTemp[i] = pafStartMM[i];
+			afEndTemp[i] =  pafEndMM[i];
+			abycentages[i] = pbycentages[i];
+		}
+		generate_reverse_template_direct( afStartTemp, afEndTemp,pafStartMM, pafEndMM);
+		for (int i = 0; i < MARKTEMP_COUNT; i++)
+		{
+			pbycentages[MARKTEMP_COUNT-i-1]=abycentages[i];
+		}
+
+	}
+
+}
+
+void vGenerateOUNOData(unsigned char bySignalType,MatlabInputT *pstInput ,BYTE byColorId,float *pafStartMM,
+			float *pafEndMM,unsigned char *pbycentages)
+{
+	pafStartMM[0] = 5; pafEndMM[0] = 10;
+	//byColorId=byColorId;
+	if (bySignalType <=0)
+	{
+		bySignalType=1;
+	}
+	switch (byColorId)
+	{
+		case 1:
+			pafStartMM[1] = 61.0; pafEndMM[1] = 64.0;
+			pafStartMM[2] = 176.0; pafEndMM[2] = 178.0;
+			pafStartMM[3] = 210.0; pafEndMM[3] = 213.0;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		case 2:
+			pafStartMM[1] = 66.0; pafEndMM[1] = 69.0;
+			pafStartMM[2] = 145.0; pafEndMM[2] = 147.0;
+			pafStartMM[3] = 230; pafEndMM[3] = 233.0;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		default:
+			pafStartMM[1] = 61.0+(byColorId-1)*5; pafEndMM[1] = 64.0+(byColorId-1)*5;
+			pafStartMM[2] = 145.5-(byColorId-2)*1.5; pafEndMM[2] = 147.0-(byColorId-2)*1.5;
+			pafStartMM[3] = 210.0+(byColorId-1)*20; pafEndMM[3] = 213.0+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+	}
+	if (pstInput->byCurMarkType == MARK_ARRANGE_VFOR)//顺序
+	{
+
+	}
+	else if(pstInput->byCurMarkType == MARK_ARRANGE_VREV)//逆序
+	{
+		float afStartTemp[MARKTEMP_COUNT] = {0}; // 毫米单位
+		float afEndTemp[MARKTEMP_COUNT] = {0};
+		unsigned char abycentages[MARKTEMP_COUNT]={0};
+		for (int i = 0; i < MARKTEMP_COUNT; i++)
+		{
+			afStartTemp[i] = pafStartMM[i];
+			afEndTemp[i] =  pafEndMM[i];
+			abycentages[i] = pbycentages[i];
+		}
+		generate_reverse_template_direct( afStartTemp, afEndTemp,pafStartMM, pafEndMM);
+		for (int i = 0; i < MARKTEMP_COUNT; i++)
+		{
+			pbycentages[MARKTEMP_COUNT-i-1]=abycentages[i];
+		}
+
+	}
+
+}
+
+void vGenerateOUNOD1ata(unsigned char bySignalType,MatlabInputT *pstInput ,BYTE byColorId,float *pafStartMM,
+			float *pafEndMM,unsigned char *pbycentages)
+{
+	pafStartMM[0] = 4.5; pafEndMM[0] = 9;
+	//byColorId=byColorId;
+	if (bySignalType <=0)
+	{
+		bySignalType=1;
+	}
+	switch (byColorId)
+	{
+		case 1:
+			pafStartMM[1] = 56.0; pafEndMM[1] = 59.0;
+			pafStartMM[2] = 167.0; pafEndMM[2] = 170.0;
+			pafStartMM[3] = 167.0; pafEndMM[3] = 170.0;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		case 2:
+			pafStartMM[1] = 60.0; pafEndMM[1] = 63.0;
+			pafStartMM[2] = 187.0; pafEndMM[2] = 190.0;
+			pafStartMM[3] = 187.0; pafEndMM[3] = 190.0;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+		default:
+			pafStartMM[1] = 56.0+(byColorId-1)*4; pafEndMM[1] = 59.0+(byColorId-1)*4;
+			pafStartMM[2] = 167.0+(byColorId-1)*20; pafEndMM[2] = 170.0+(byColorId-1)*20;
+			pafStartMM[3] = 167.0+(byColorId-1)*20; pafEndMM[3] = 170.0+(byColorId-1)*20;
+			pbycentages[0]=100; pbycentages[1]=100; pbycentages[2]=100; pbycentages[3]=100;
+			break;
+	}
+	if (pstInput->byCurMarkType == MARK_ARRANGE_VFOR)//顺序
+	{
+
+	}
+	else if(pstInput->byCurMarkType == MARK_ARRANGE_VREV)//逆序
+	{
+		float afStartTemp[MARKTEMP_COUNT] = {0}; // 毫米单位
+		float afEndTemp[MARKTEMP_COUNT] = {0};
+		unsigned char abycentages[MARKTEMP_COUNT]={0};
+		for (int i = 0; i < MARKTEMP_COUNT; i++)
+		{
+			afStartTemp[i] = pafStartMM[i];
+			afEndTemp[i] =  pafEndMM[i];
+			abycentages[i] = pbycentages[i];
+		}
+		generate_reverse_template_direct( afStartTemp, afEndTemp,pafStartMM, pafEndMM);
+		for (int i = 0; i < MARKTEMP_COUNT; i++)
+		{
+			pbycentages[MARKTEMP_COUNT-i-1]=abycentages[i];
+		}
+
+	}
+
+}
+
+
+///**
+// * @brief 独立运行主函数
+// * @param argc 参数个数
+// * @param argv 参数数组
+// * @return 返回码
+// */
+//int KsAutoFindSignal(uint8_t* pbyRoundData1,//粗采样T1_R起始地址
+//		uint8_t* pbyRoundData2,				//粗采样T2_R起始地址
+//		unsigned char i_xEn,
+//		StAxisParam* i_pstStAxisParam,
+//		REAL i_alrBase[2],
+//		uint8_t byArcSensorType//:BYTE;(*套色传感器类型|=0 传统光电眼|=1 曜光接口(光纤电眼)*)
+//			)
+//{
+////	if (i_xEn)
+////	{
+//		static MatlabInputT stInput = {0};
+//		static MatlabOutputT stOutput = {0};
+//		// 检测参数
+//		stInput.fGirth = i_pstStAxisParam->lrGirth;
+//		stInput.cMeanOffset = i_pstStAxisParam->byMeanOffset;
+//		stInput.nMinWidth = nMMtoPixel(i_pstStAxisParam->rWidth_Mark_Min, stInput.fGirth);
+//		stInput.nMaxWidth = nMMtoPixel(i_pstStAxisParam->rWidth_Mark_Max, stInput.fGirth);
+//		stInput.nMaxGap = nMMtoPixel(i_pstStAxisParam->rMaxGap, stInput.fGirth);
+//
+//		// 当前颜色模板参数
+//		stInput.byCurMarkType = i_pstStAxisParam->iMarkArrangeModal;//顺逆序
+//		stInput.byCurColorId = i_pstStAxisParam->byColorIdCurrent;//色序
+//		stInput.fCurSimilarityThreshold =(float)(i_pstStAxisParam-> bySimilarityThreshold)/100.0;//匹配阈值
+//		stInput.byCurSignalCount = MARKTEMP_COUNT;//模版色标个数
+//		stInput.nDataLength = MAX_ROUND_POINT;
+//		//uint8_t abyRonndList[2] = {0};
+//		if (stInput.byCurMarkType == MARK_ARRANGE_VFOR)//顺序
+//		{
+//			stInput.pabyImageData =pbyRoundData1;
+//			stInput.fBaseLine =i_alrBase[1];
+//			stInput.byCurSpecialMarkId = 0;//
+//			stInput.byCurTriangleMarkId = 3;// 当前颜色三角形标记ID = 0;
+//		}
+//		else if(stInput.byCurMarkType == MARK_ARRANGE_VREV)//逆序
+//		{
+//			stInput.pabyImageData =pbyRoundData2;
+//			stInput.fBaseLine = i_alrBase[2];
+//			stInput.byCurSpecialMarkId =1;//
+//			stInput.byCurTriangleMarkId =0;// 当前颜色三角形标记ID = 0;
+//		}
+//		//特殊标使能，为-1时只进行模版匹配，为大于-1时会按照间隙寻找特殊标，目前效果不是很好，所以主站就默认关掉
+//		if (!i_pstStAxisParam->xSpecialMarkEn)
+//		{
+//			stInput.byCurSpecialMarkId = -1;//
+//		}
+//
+//		short aiCurModeMidPoint[MARKTEMP_COUNT] = {0};// 当前前一颜色位置中心位置点数数组
+//		unsigned char abyCurModeRadius[MARKTEMP_COUNT] = {0};// 当前前一颜色半径数组
+//		short aiPreModeMidPoint[MARKTEMP_COUNT] = {0};// 前一颜色位置中心位置点数数组
+//		unsigned char abyPreModeRadius[MARKTEMP_COUNT] = {0};// 前一颜色半径数组
+//		unsigned char abyCurPercentages[MARKTEMP_COUNT] = {100, 100, 100, 100};
+//		//vGenerateKESAIData(i_pstStAxisParam->bySignalType,&stInput,stInput.byCurColorId,afCurStartMM, afCurEndMM,abyCurPercentages);
+//		//vGenerateOUNOData(i_pstStAxisParam->bySignalType,&stInput,stInput.byCurColorId,afCurStartMM, afCurEndMM,abyCurPercentages);
+//		for (int i = 0; i < MARKTEMP_COUNT; i++)
+//		{
+//			aiCurModeMidPoint[i]=i_pstStAxisParam->aiCurModeMidPoint[i];
+//			abyCurModeRadius[i]	=i_pstStAxisParam->abyCurModeRadius[i];
+//			aiPreModeMidPoint[i] = i_pstStAxisParam->aiPreModeMidPoint[i];
+//			abyPreModeRadius[i] = i_pstStAxisParam->abyPreModeRadius[i];
+//		}
+//		stInput.paiCurModeMidPoint = aiCurModeMidPoint;
+//		stInput.pabyCurModeRadius = abyCurModeRadius;
+//		stInput.pabyCurPercentages = abyCurPercentages;
+//		//stInput.pachCurMarkIds = achCurMarkIds;
+//
+//
+//		// 前一个颜色模板参数
+//		stInput.byPreMarkType =   i_pstStAxisParam->iMarkArrangeModal;//i_pstStAxisParam->byMarkArrangeModal;
+//		stInput.byPreColorId =  i_pstStAxisParam->byColorIdCurrent -1 ;
+//		stInput.byPreTriangleMarkId = 3;
+//		stInput.byPreSpecialMarkId = 0;
+//		stInput.fPreSimilarityThreshold =(float)( i_pstStAxisParam-> bySimilarityThreshold)/100;
+//		stInput.byPreSignalCount = MARKTEMP_COUNT;
+//		if (stInput.byPreMarkType == MARK_ARRANGE_VFOR)//顺序
+//		{
+//		stInput.byPreSpecialMarkId = 0;//
+//		stInput.byPreTriangleMarkId = 3;// 当前颜色三角形标记ID = 0;
+//		}
+//		else if(stInput.byCurMarkType == MARK_ARRANGE_VREV)//逆序
+//		{
+//			stInput.byPreSpecialMarkId =1;//
+//			stInput.byPreTriangleMarkId =0;// 当前颜色三角形标记ID = 0;
+//		}
+//		unsigned char abyPrePercentages[MARKTEMP_COUNT] = {100, 100, 100, 100};
+//		//vGenerateKESAIData(i_pstStAxisParam->bySignalType,&stInput,stInput.byPreColorId ,afPreStartMM, afPreEndMM,abyPrePercentages);
+////		vGenerateOUNOData(i_pstStAxisParam->bySignalType,&stInput,stInput.byPreColorId ,afPreStartMM, afPreEndMM,abyPrePercentages);
+//
+//		stInput.paiPreModeMidPoint = aiPreModeMidPoint;
+//		stInput.pabyPreModeRadius = abyPreModeRadius;
+//		stInput.pabyPrePercentages = abyPrePercentages;
+//		//stInput.pachPreMarkIds = achPreMarkIds;
+//		// 执行检测
+//
+//		nMainMatlabInterfaceFixed_New(&stInput, &stOutput,i_pstStAxisParam,byArcSensorType);
+//	return 0;
+//}
+
+
+/**
+ * @brief 独立运行主函数
+ * @param argc 参数个数
+ * @param argv 参数数组
+ * @return 返回码
+ */
+int KsAutoFindSignal(uint8_t* pbyRoundData1,				//粗采样T1_R起始地址
+		uint8_t* pbyRoundData2,				//粗采样T2_R起始地址
+		uint8_t* pbyRoundData3,				//粗采样T1_G起始地址
+		uint8_t* pbyRoundData4,				//粗采样T2_G起始地址
+		uint8_t* pbyRoundData5,				//粗采样T1_B起始地址
+		uint8_t* pbyRoundData6,				//粗采样T2_B起始地址
+		unsigned char i_xEn,
+		REAL i_alrBase[2],					//基值
+		uint8_t bySignalSelect,              //通道选择
+		StAxisParam* i_pstStAxisParam,
+		uint8_t byArcSensorType
+			)
+{
+//	if (i_xEn)
+//	{
+		static MatlabInputT stInput = {0};
+		static MatlabOutputT stOutput = {0};
+		// 检测参数
+		stInput.fGirth = i_pstStAxisParam->lrGirth;
+		stInput.cMeanOffset = i_pstStAxisParam->byMeanOffset;
+		stInput.nMinWidth = nMMtoPixel(i_pstStAxisParam->rWidth_Mark_Min, stInput.fGirth);
+		stInput.nMaxWidth = nMMtoPixel(i_pstStAxisParam->rWidth_Mark_Max, stInput.fGirth);
+		stInput.nMaxGap = nMMtoPixel(i_pstStAxisParam->rMaxGap, stInput.fGirth);
+
+		// 当前颜色模板参数
+		stInput.byCurMarkType = i_pstStAxisParam->iMarkArrangeModal;//顺逆序
+		stInput.byCurColorId = i_pstStAxisParam->byColorIdCurrent;//色序
+		stInput.fCurSimilarityThreshold =(float)(i_pstStAxisParam-> bySimilarityThreshold)/100.0;//匹配阈值
+		stInput.byCurSignalCount = MARKTEMP_COUNT;//模版色标个数
+		stInput.nDataLength = MAX_ROUND_POINT;
+		uint8_t abyRonndList[2] = {0};
+		abyRonndList[0] = GET_CUR_CHANNEL_RGB(bySignalSelect,1);//T1当前通道选择
+		abyRonndList[1] = GET_CUR_CHANNEL_RGB(bySignalSelect,2);//T2当前通道选择
+		if (stInput.byCurMarkType == MARK_ARRANGE_VFOR)//顺序
+		{
+			// 图像数据
+			switch (abyRonndList[0])
+			{
+			case 0:
+				stInput.pabyImageData =pbyRoundData1;
+				break;
+			case 1:
+				stInput.pabyImageData =pbyRoundData3;
+				break;
+			case 2:
+				stInput.pabyImageData =pbyRoundData5;
+				break;
+			default:
+				break;
+			}
+			//stInput.fBaseLine = i_alrBase[1];
+			//2026.8.4.174325+ 基线索引使用错误
+			stInput.fBaseLine = i_alrBase[0];
+			stInput.byCurSpecialMarkId = 0;//
+			stInput.byCurTriangleMarkId = 3;// 当前颜色三角形标记ID = 0;
+		}
+		else if(stInput.byCurMarkType == MARK_ARRANGE_VREV)//逆序
+		{
+			switch (abyRonndList[1])
+			{
+			case 0:
+				stInput.pabyImageData =pbyRoundData2;
+				break;
+			case 1:
+				stInput.pabyImageData =pbyRoundData4;
+				break;
+			case 2:
+				stInput.pabyImageData =pbyRoundData6;
+				break;
+			default:
+				break;
+			}
+			//stInput.fBaseLine = i_alrBase[2];
+			//2026.8.4.174325+ 基线索引使用错误
+			stInput.fBaseLine = i_alrBase[1];
+			stInput.byCurSpecialMarkId =1;//
+			stInput.byCurTriangleMarkId =0;// 当前颜色三角形标记ID = 0;
+		}
+		//特殊标使能，为-1时只进行模版匹配，为大于-1时会按照间隙寻找特殊标，目前效果不是很好，所以主站就默认关掉
+		if (!i_pstStAxisParam->xSpecialMarkEn)
+		{
+			stInput.byCurSpecialMarkId = -1;//
+		}
+
+		static short aiCurModeMidPoint[MARKTEMP_COUNT] = {0};// 当前前一颜色位置中心位置点数数组
+		static unsigned char abyCurModeRadius[MARKTEMP_COUNT] = {0};// 当前前一颜色半径数组
+		static short aiPreModeMidPoint[MARKTEMP_COUNT] = {0};// 前一颜色位置中心位置点数数组
+		static unsigned char abyPreModeRadius[MARKTEMP_COUNT] = {0};// 前一颜色半径数组
+		unsigned char abyCurPercentages[MARKTEMP_COUNT] = {100, 100, 100, 100};
+		//vGenerateKESAIData(i_pstStAxisParam->bySignalType,&stInput,stInput.byCurColorId,afCurStartMM, afCurEndMM,abyCurPercentages);
+		//vGenerateOUNOData(i_pstStAxisParam->bySignalType,&stInput,stInput.byCurColorId,afCurStartMM, afCurEndMM,abyCurPercentages);
+		for (int i = 0; i < MARKTEMP_COUNT; i++)
+		{
+			aiCurModeMidPoint[i]=i_pstStAxisParam->aiCurModeMidPoint[i];
+			abyCurModeRadius[i]	=i_pstStAxisParam->abyCurModeRadius[i];
+			aiPreModeMidPoint[i] = i_pstStAxisParam->aiPreModeMidPoint[i];
+			abyPreModeRadius[i] = i_pstStAxisParam->abyPreModeRadius[i];
+		}
+		stInput.paiCurModeMidPoint = aiCurModeMidPoint;
+		stInput.pabyCurModeRadius = abyCurModeRadius;
+		stInput.pabyCurPercentages = abyCurPercentages;
+		//stInput.pachCurMarkIds = achCurMarkIds;
+
+
+		// 前一个颜色模板参数
+		stInput.byPreMarkType =   i_pstStAxisParam->iMarkArrangeModal;//i_pstStAxisParam->byMarkArrangeModal;
+		stInput.byPreColorId =  i_pstStAxisParam->byColorIdCurrent -1 ;
+		stInput.byPreTriangleMarkId = 3;
+		stInput.byPreSpecialMarkId = 0;
+		stInput.fPreSimilarityThreshold =(float)( i_pstStAxisParam-> bySimilarityThreshold)/100;
+		stInput.byPreSignalCount = MARKTEMP_COUNT;
+		if (stInput.byPreMarkType == MARK_ARRANGE_VFOR)//顺序
+		{
+		stInput.byPreSpecialMarkId = 0;//
+		stInput.byPreTriangleMarkId = 3;// 当前颜色三角形标记ID = 0;
+		}
+		else if(stInput.byCurMarkType == MARK_ARRANGE_VREV)//逆序
+		{
+			stInput.byPreSpecialMarkId =1;//
+			stInput.byPreTriangleMarkId =0;// 当前颜色三角形标记ID = 0;
+		}
+		unsigned char abyPrePercentages[MARKTEMP_COUNT] = {100, 100, 100, 100};
+		//vGenerateKESAIData(i_pstStAxisParam->bySignalType,&stInput,stInput.byPreColorId ,afPreStartMM, afPreEndMM,abyPrePercentages);
+//		vGenerateOUNOData(i_pstStAxisParam->bySignalType,&stInput,stInput.byPreColorId ,afPreStartMM, afPreEndMM,abyPrePercentages);
+
+		stInput.paiPreModeMidPoint = aiPreModeMidPoint;
+		stInput.pabyPreModeRadius = abyPreModeRadius;
+		stInput.pabyPrePercentages = abyPrePercentages;
+		//stInput.pachPreMarkIds = achPreMarkIds;
+		// 执行检测
+
+		nMainMatlabInterfaceFixed_New(&stInput, &stOutput,i_pstStAxisParam, byArcSensorType);
+
+//	}
+//	else
+//	{
+//		i_pstStAxisParam->byDetectedSignalCount = 0;
+//		i_pstStAxisParam->iError_Msg =0;
+//		i_pstStAxisParam->xFlag_FindFirstSuccess = 0;
+//		i_pstStAxisParam->iCurLabelPos = -1;
+//		i_pstStAxisParam->xFlag_FindPreSuccess = 0;
+//		i_pstStAxisParam->iPreLabelPos = -1;
+//	}
+	return 0;
+}
+
+

@@ -345,6 +345,8 @@ static void ks_fly_note_alldev(KsFlyRemover *pst, float fDev)
  * 入窗口径,与仿真run_online只feed实际喂入帧一致)|Yang.zj+ 2026.10.27.175616|Yang.zj+ 2026.11.09.160000 */
 static void ks_fly_note_qdq(KsFlyRemover *pst, float fDd)
 {
+	if (fDd <= 0.0f)/* 零差分不入窗(同8.4 qdq_push守卫):分辨率窗只收非零差分|2026.11.13自8.4回灌 */
+		return;
 	if (pst->uwQdqCnt >= 16)
 	{
 		memmove(pst->afQdq, &pst->afQdq[1], 15 * sizeof(float));
@@ -391,29 +393,28 @@ static float ks_fly_feed(KsFlyRemover *pst, float fX, uint8_t *o_byJudge)
 		 * 不配对→丢帧1,帧2变新帧1,等下一帧|Yang.zj+ 2026.11.06.163802 */
 		if (pst->xLatchValid == 0)
 		{
-			if (xDdq != 0)		/* 此态pval必无效,防御性入窗 */
-				ks_fly_note_qdq(pst, fDd);
-			pst->fPVal = fX;
-			pst->uiPIdx = uiIdx;
-			pst->xPValValid = 1;
 			pst->fLatch = fX;		/* 暂存帧1(复用锁存位) */
 			pst->xLatchValid = 1;
 			if (o_byJudge)
 				*o_byJudge = KS_FLY_JUDGE_FIRST;
-			return fX;
+			return fX;	/* 暂存帧尚未确认喂入:差分不入qdq窗,pval不更新(对齐仿真版:
+					 * 暂存/丢弃帧不调feed)|2026.11.09.161525|自8.4回灌老架构 2026.11.13 */
 		}
 		else
 		{
 			if (fabsf(fX - pst->fLatch) <= 100.0f)
 			{
-				/* 配对成功:帧1和帧2一起进历史(两帧此刻被喂入,帧2差分|帧2-帧1|入分辨率窗) */
-				if (xDdq != 0)
-					ks_fly_note_qdq(pst, fDd);
+				/* 配对成功:帧1和帧2一起进历史 */
+				ks_fly_push(pst, uiIdx - 1, pst->fLatch);
+				ks_fly_push(pst, uiIdx, fX);
+				/* 两帧等价于仿真版连续两次feed:唯一入窗差分=|帧2-帧1|(≤100丝);
+				 * 此前被丢弃的配对帧的差分永不入窗——狂跳启动(首帧对针对的场景)
+				 * 的>100丝垃圾差分不再灌满16格分辨率窗抬高q/β×q门槛
+				 * |2026.11.09.161525|自8.4回灌老架构 2026.11.13 */
+				ks_fly_note_qdq(pst, fabsf(fX - pst->fLatch));
 				pst->fPVal = fX;
 				pst->uiPIdx = uiIdx;
 				pst->xPValValid = 1;
-				ks_fly_push(pst, uiIdx - 1, pst->fLatch);
-				ks_fly_push(pst, uiIdx, fX);
 				pst->fLatch = fX;		/* 锁存=帧2 */
 				pst->xStarted = 1;
 				if (o_byJudge)
@@ -422,16 +423,11 @@ static float ks_fly_feed(KsFlyRemover *pst, float fX, uint8_t *o_byJudge)
 			}
 			else
 			{
-				/* 不配对:丢帧1,帧2变新帧1;本帧未被喂入,差分不入分辨率窗,
-				 * 但pval仍跟随本帧(下帧差分=|下帧-本帧|,与仿真配对成功时
-				 * 双帧feed的差分口径一致)|Yang.zj+ 2026.11.09.160000 */
-				pst->fPVal = fX;
-				pst->uiPIdx = uiIdx;
-				pst->xPValValid = 1;
+				/* 不配对:丢帧1,帧2变新帧1 */
 				pst->fLatch = fX;
 				if (o_byJudge)
 					*o_byJudge = KS_FLY_JUDGE_FIRST;
-				return fX;
+				return fX;	/* 丢弃帧差分不入窗,pval不更新|2026.11.09.161525|自8.4回灌 2026.11.13 */
 			}
 		}
 	}

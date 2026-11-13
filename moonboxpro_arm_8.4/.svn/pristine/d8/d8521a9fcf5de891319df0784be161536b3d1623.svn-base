@@ -1,0 +1,6 @@
+../Kesai_Process/KS_RsMorphFilter.c:20:17:s_KsRsMorph_GetMirrorIndex	4
+../Kesai_Process/KS_RsMorphFilter.c:35:9:KS_RsMorphFilter_CheckWindowValid	6
+../Kesai_Process/KS_RsMorphFilter.c:52:13:s_KsRsMorph_SlidingMin_U8	7
+../Kesai_Process/KS_RsMorphFilter.c:93:13:s_KsRsMorph_SlidingMax_U8	7
+../Kesai_Process/KS_RsMorphFilter.c:135:9:KS_RsMorphFilter_U8	11
+../Kesai_Process/KS_RsMorphFilter.c:199:10:KsCalcMorphWindowLen	6

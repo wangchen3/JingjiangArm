@@ -1,0 +1,2574 @@
+﻿//#include "stdafx.h"
+#include "ks_calc_arc_err.h"
+#include "ks_arc_err_define.h"
+
+
+
+//初始化结构体
+void KSInitArcErrStsBit(LP_ArcErrStsBit const pArcErrStsBit)
+{
+	pArcErrStsBit->xLost = FALSE;
+	pArcErrStsBit->xAlarm = FALSE;
+	pArcErrStsBit->xNormal = FALSE;
+	pArcErrStsBit->xFake = FALSE;
+	pArcErrStsBit->reserved_1 = FALSE;
+}
+
+void KSInitArcErrCtlBit(LP_ArcErrCtlBit const pArcErrCtlBit)
+{
+	//低8bit 控制计算
+	//单眼方式下@和原来波门正逆序保持一致,当前色所在的那路信号
+	pArcErrCtlBit->calc_follow_any_eye1 = FALSE;//单眼跟踪任意色。
+	//双眼方式下
+	pArcErrCtlBit->calc_follow_pre_eye2 = TRUE;//双眼跟踪前一色
+	pArcErrCtlBit->calc_follow_any_eye2 = FALSE;//双眼跟踪任意色@新方案
+	pArcErrCtlBit->reserved_0 = 0;
+
+	//高8bit 控制使用@只能有效一种
+	//单眼方式下@和原来波门正逆序保持一致,当前色所在的那路信号
+	pArcErrCtlBit->use_follow_any_eye1 = FALSE;//使用单眼跟踪任意色。
+	//双眼方式下
+	pArcErrCtlBit->use_follow_pre_eye2 = TRUE;//使用双眼跟踪前一色
+	pArcErrCtlBit->use_follow_any_eye2 = FALSE;//使用双眼跟踪任意色@新方案
+	pArcErrCtlBit->reserved_1 = 0;
+}
+void KSInitArcMarkInf(LP_ArcMarkInf const pstArcMarkInf)
+{
+	//声明
+	uint16_t i;
+
+	//实现
+	pstArcMarkInf->uId = 0;//色标id
+	pstArcMarkInf->fBaseLine = 0;//基线
+	pstArcMarkInf->fSignalEffectiveScope = 0;//有效幅度
+	pstArcMarkInf->iPeakValuePos = 0;//峰值索引
+	pstArcMarkInf->uPeakRawValue = 0;//峰值
+	pstArcMarkInf->uDataNum_Act = 1000;//实际的数据个数
+	pstArcMarkInf->uDataIndex = 0;//色标精采样数据的索引
+	pstArcMarkInf->puData = 0;//数据指针@需要根据pstArcMarkInf->uDataIndex获取
+	pstArcMarkInf->fDoorPosSa = 0;//色标所在波门起始位置@mm|当前色和跟踪色必须相对同一个起点
+	pstArcMarkInf->uIsT1T2Pos = SAMPLE_T1;//默认是t1
+	pstArcMarkInf->uPolarityIsNegative = SIGNAL_IS_NEGATIVE;
+
+
+	for (i = 0; i < MAX_SCOPELEVEL_ARCMARK; i++)
+	{
+		pstArcMarkInf->auFindIt_Frontedge[i] = 0;
+		pstArcMarkInf->afPos_FrontEdge[i] = 0;
+		pstArcMarkInf->auFindIt_BackEdge[i] = 0;
+		pstArcMarkInf->afPos_BackEdge[i] = 0;
+		pstArcMarkInf->afWidth[i] = 0;
+		pstArcMarkInf->afWidthComp[i] = 0.0f;
+	}
+
+
+	//使用的阈值信息
+	pstArcMarkInf->uScopeLevelId = 0;//阈值号
+	pstArcMarkInf->uEdgeInf = 0;//前后沿信息
+	for (i = 0; i < MAX_FINESAMPLE_NUM; i++)
+		pstArcMarkInf->auDataFilter[i] = 0;
+
+}
+
+
+void KSInitArcMarkParam(LP_ArcMarkParam const pstArcMarkParam)
+{
+	pstArcMarkParam->uMarkType = MARK_TYPE_LINE;//默认矩形
+	pstArcMarkParam->uPolarityIsNegative = SIGNAL_IS_NEGATIVE;//信号是反的@常规信号
+	pstArcMarkParam->xInclNegative10vSignal = MARK_IS_10VSIGNAL;//默认单极性
+	pstArcMarkParam->fMinimumSignalval = SIGNAL_VALUE_MIN;//最小信号值V
+	pstArcMarkParam->fSmallSignalval = SIGNAL_VALUE_SMALL;//小信号值V
+	pstArcMarkParam->fMinimumSignalval_Sample = KSMarkVoltageToValue(SIGNAL_VALUE_MIN, MARK_IS_10VSIGNAL);//最小信号值@采样值|按照单极性
+	pstArcMarkParam->fSmallSignalval_Sample = KSMarkVoltageToValue(SIGNAL_VALUE_SMALL, MARK_IS_10VSIGNAL);//小信号值@采样值|按照单极性
+
+	pstArcMarkParam->uScopeLevelNum = 3;//阈值个数
+	pstArcMarkParam->afScopeLevelRatio[0] = (float)0.5;//3段阈值
+	pstArcMarkParam->afScopeLevelRatio[1] = (float)0.25;
+	pstArcMarkParam->afScopeLevelRatio[2] = (float)0.7;
+	pstArcMarkParam->uFilterpoints = 3;//数据滤波的次数
+
+	pstArcMarkParam->xUseInnerBase = FALSE;//门内基线标志位赋初值
+	pstArcMarkParam->xCalcBaselineTwice = TRUE;//是否二次校准赋初值
+}
+
+void KSInitArcErrInf(LP_ArcErrInf const pstArcErrInf)
+{
+	pstArcErrInf->uFollowType = FOLLOW_PRE_EYE2;//默认双眼跟前一色
+	pstArcErrInf->iArcErrCode = ARC_ERR_NONE;//套色误差计算错误码
+	//纵向
+	KSInitArcErrStsBit(&pstArcErrInf->stArcSts);//状态
+	pstArcErrInf->iErrValue = 0;//误差值
+	pstArcErrInf->iErrValue__ = 0;//误差值
+}
+
+void KSInitArcErrParam(LP_ArcErrParam const pstArcErrParam)
+{
+	int8_t i;
+	pstArcErrParam->uMarkType = MARK_TYPE_LINE;//色标类型@梯形、矩形等
+	pstArcErrParam->uMarkArrangeType = MARK_ARRANGE_VFOR;//标记类型@顺序、逆序等
+	pstArcErrParam->uMarkInterval = MARK_INTERVAL;//色标间隔@默认20mm
+	pstArcErrParam->uArcDoorWidth = 20;//套色波门宽度@mm
+	pstArcErrParam->fPrecision_Act = (float)0.02;//计算误差使用的精采样精度@一个点对应的距离|mm
+	pstArcErrParam->pauFsDataSa1 = NULL;//第一路精采样数据@数组指针
+	pstArcErrParam->pauFsDataSa2 = NULL;//第二路精采样数据@数组指针
+	pstArcErrParam->fBase1 = 0;
+	pstArcErrParam->fBase2 = 0;//基线值
+	//pstArcErrParam->uCalcArcErrType = CALC_ARCERR_V;//计算套色误差的形式@判断计算纵向、横向、纵横向
+	pstArcErrParam->uArcDoorType = SAMPLE_SINGLE_DOOR;//套色波门类型@单波门还是双波门
+	//	pstArcErrParam->fDoorInterval_mm = 0;//2个波门间隔距离mm@单个波门是0
+	pstArcErrParam->fGirth = 500;//周长值mm
+	pstArcErrParam->fAlarm_V = (float)0.2;//纵向报警值@mm
+	pstArcErrParam->fAlarm_H = (float)0.3;//纵向报警值@mm
+
+	//从采样配置函数中获取
+	for (i = 0; i < MAX_SAMPLE_DOOR_NUM; i++)
+	{
+		pstArcErrParam->auDoorPos[i] = 0;//波门位置值
+		pstArcErrParam->auDataNum[i] = 0;//数据点数@采样配置的值@精彩样点数|[0]代表第一波门|[1]代表第二波门(不使用则=0)
+	}
+	//一些和横向相关的参数
+	pstArcErrParam->xCalcArcErrEn_H = FALSE;//横向误差计算使能
+
+
+	//纵向
+	pstArcErrParam->uArcId_V = 0;//当前色id
+	pstArcErrParam->uArcFollowId_V = 0;//跟踪色id
+	KSInitArcErrCtlBit(&pstArcErrParam->stArcErrCtlBit_V);//套色误差跟踪方式
+	//横向
+	pstArcErrParam->uArcId_H = 0;//当前色id
+	pstArcErrParam->uArcFollowId_H = 0;//跟踪色id
+	KSInitArcErrCtlBit(&pstArcErrParam->stArcErrCtlBit_H);//套色误差跟踪方式
+}
+
+
+//标记电压值转换为采样值
+//2024.02.26.111525 小信号阀值
+//008光电眼@10v供电	0--65535 对应0--10v
+//012光电眼@+-10v供电，0--65535 对应-10v--10v
+//使用双极性是否打开进行判断
+float KSMarkVoltageToValue(float fVloltage, uint8_t uSignalType)
+{
+	float fResult = 0;
+	if (uSignalType == MARK_IS_INCLNEGATIVE_10VSIGNAL)//双极性
+	{
+		fResult = (float)65535 / 5.66 * fVloltage;//2025.10.31.084118 固高了解最大电压范围应该时+-2.83@最大范围时5.66
+	}
+	else//单极性
+	{
+
+		fResult = (float)65535 / 10 * fVloltage;
+	}
+
+	return fResult;
+}
+
+//整数循环取模@0---iMod变化
+uint16_t KSLoopMod(int16_t iValue, int16_t iMod)
+{
+	int16_t iResult = iValue;
+	while (iResult >= iMod)
+	{
+		iResult -= iMod;
+	}
+	while (iResult < 0)
+	{
+		iResult += iMod;
+	}
+	return (uint16_t)iResult;
+}
+
+
+//获取精采样实际精度@丝
+float KSGetActPrecision(const uint32_t sampleppr,//采样精度@4097152
+	const float set_precision,//设置的精度值@默认0.02
+	const float girth,//设置的周长@默认500mm
+	const uint16_t n,//电机侧减速比|eg:5
+	const uint16_t m)//版辊侧减速比|eg:1
+{
+	double tmp, tmp1, tmp2, den;
+	uint16_t num;//分子是整数
+
+	tmp1 = (double)sampleppr * set_precision * n;
+	tmp2 = (double)girth * 32 * 1000 * m;
+	tmp = tmp1 / tmp2;
+	//分子取整数位
+	num = (uint16_t)(tmp - 0.5);//四舍五入
+
+	tmp1 = sampleppr * n;
+	tmp2 = (double)girth * 32 * 1000 * m;
+	den = tmp1 / tmp2;//分母是浮点数
+	tmp = num / den;//计算实际精度值@丝
+
+	return (float)(tmp);
+}
+
+float KS_RatioL_ByThresholdCutting_Copy(float i_lrThresholdY, float i_lrPreviousY, float i_lrCurrentY)
+{
+	float lrResult;
+	//定义结束
+//	(*han.dp@2017.3.31.131121||
+//	* 跨阀值的左边占据的比例%|必须跨点||*)
+	lrResult = 0;
+	if ((i_lrPreviousY != i_lrCurrentY) && //(*isn't the same sampling point*)
+		((i_lrThresholdY >= i_lrPreviousY && i_lrThresholdY <= i_lrCurrentY) || //(*rising edge*)
+			(i_lrThresholdY <= i_lrPreviousY && i_lrThresholdY >= i_lrCurrentY)))	//(*falling edge*)
+	{
+		lrResult = (i_lrThresholdY - i_lrPreviousY) / (i_lrCurrentY - i_lrPreviousY);
+	}
+
+	return lrResult;
+}
+//检查标记信息@返回标志指示是否相同色标
+uint8_t KSCheckMarkInfIsSame(LP_ArcMarkInf const pstArcMarkInf_1, LP_ArcMarkInf const pstArcMarkInf_2)
+{
+
+	uint8_t xSameArcMark = FALSE;
+	//色标在同一路而且id还一样,我们认为是同一路
+	if (pstArcMarkInf_1->uId == pstArcMarkInf_2->uId &&
+		pstArcMarkInf_1->uIsT1T2Pos == pstArcMarkInf_2->uIsT1T2Pos)
+		xSameArcMark = TRUE;
+
+	return xSameArcMark;
+
+}
+//获取阀值位置,输出阀值位置和标志@2024.8.26
+//为了减少循环次数,点数循环一次就把所有基线确认出来
+int16_t KSGetThresholdPosEx(const ArcMarkParam* pstArcMarkParam, LP_ArcMarkInf const pstArcMarkInf)//处理后的色标相关信息
+{
+	//这个代码是约定命名规则前实现的，为了减少工作量就不按照命名规则重新实现了@2025.4.9.163931
+	float rTmpVal = 0, scopelevelratio = 0;//中间变量
+	float arThreshold[MAX_SCOPELEVEL_ARCMARK] = { 0 }, rThreshold = 0;//阈值
+	float radditioncx;
+	unsigned char xCanParsingThresholdLevel = 0;//小信号处理的标志
+	unsigned char findit, findit_num;
+	short point = 0, i = 0;
+	unsigned short fsdata = 0, prevfsdata = 0, nextfsdata = 0;
+
+	/* 先清理本帧输出，避免沿用上一帧残留 */
+	pstArcMarkInf->uScopeLevelId = 0;
+	pstArcMarkInf->uEdgeInf = 0;
+	for (i = 0; i < pstArcMarkParam->uScopeLevelNum; i++)
+	{
+		pstArcMarkInf->auFindIt_Frontedge[i] = 0;
+		pstArcMarkInf->afPos_FrontEdge[i] = 0;
+		pstArcMarkInf->auFindIt_BackEdge[i] = 0;
+		pstArcMarkInf->afPos_BackEdge[i] = 0;
+		pstArcMarkInf->afWidth[i] = 0;
+	}
+
+	//小信号处理-信号太小就不处理了
+	if (pstArcMarkInf->fSignalEffectiveScope < pstArcMarkInf->fSignalGate_Sample)
+	{
+		xCanParsingThresholdLevel = FALSE;//不计算阀值位置使能
+		return ARC_ERR_SIGNAL_SMALL;
+	}
+	else
+	{
+		xCanParsingThresholdLevel = TRUE;//计算阀值位置使能
+	}
+
+	//计算三段阈值,并初始化输出值
+	for (i = 0; i < pstArcMarkParam->uScopeLevelNum; i++)
+	{
+		//根据信号极性获取阈值
+		scopelevelratio = pstArcMarkParam->afScopeLevelRatio[i];
+
+		if (pstArcMarkInf->uPolarityIsNegative)//反信号@和原始波形相同方向
+		{
+			rTmpVal = pstArcMarkInf->fBaseLine - pstArcMarkInf->fSignalEffectiveScope * scopelevelratio;//计算阀值位置
+		}
+		else//正信号@和原始波形不同方向。
+		{
+			rTmpVal = pstArcMarkInf->fBaseLine + pstArcMarkInf->fSignalEffectiveScope * scopelevelratio;//计算阀值位置
+		}
+		arThreshold[i] = rTmpVal;
+
+
+		//初始化
+		pstArcMarkInf->auFindIt_Frontedge[i] = 0;//输出找到前沿标志
+		pstArcMarkInf->afPos_FrontEdge[i] = 0;//输出前沿位置
+		pstArcMarkInf->auFindIt_BackEdge[i] = 0;//输出找到后沿标志
+		pstArcMarkInf->afPos_BackEdge[i] = 0;//输出后沿位置	
+		pstArcMarkInf->afWidth[i] = 0;//输出色标宽度(位置差)
+	}
+
+
+
+	if (xCanParsingThresholdLevel)
+	{
+		//寻找前沿
+		findit_num = 0;
+
+		for (point = pstArcMarkInf->iPeakValuePos; point >= 1; point--)
+		{
+			fsdata = pstArcMarkInf->auDataFilter[point];//获取精采样数据
+			prevfsdata = pstArcMarkInf->auDataFilter[point - 1];//获取上一个精采样数据
+			for (i = 0; i < pstArcMarkParam->uScopeLevelNum; i++)
+			{
+				//获取阈值
+				rThreshold = arThreshold[i];
+
+				//检查交点
+				findit = 0;
+				if (pstArcMarkInf->uPolarityIsNegative)//反信号
+				{
+					if (fsdata <= rThreshold && prevfsdata > rThreshold)//找到拐点了
+					{
+						findit = 1;//找到一个前沿交点
+					}
+				}
+				else//正信号
+				{
+					if (fsdata >= rThreshold && prevfsdata < rThreshold)//找到拐点了
+					{
+						findit = 1;//找到一个前沿交点
+					}
+				}
+
+				// //找到了
+				// if (findit == 1)
+				// {
+				// 	findit_num += 1;//统计寻找到的个数
+				// 	radditioncx = KS_RatioL_ByThresholdCutting_Copy(
+				// 		rThreshold,
+				// 		prevfsdata,
+				// 		fsdata);//计算跨点的%
+
+				// 	pstArcMarkInf->auFindIt_Frontedge[i] = 1;//输出找到前沿标志
+				// 	pstArcMarkInf->afPos_FrontEdge[i] = (point - 1) + radditioncx;//输出前沿位置
+				// 	break;//找到了就退出
+				// }
+				//找到了
+				if (findit == 1)
+				{
+					if (pstArcMarkInf->auFindIt_Frontedge[i] == 0)
+					{
+						findit_num += 1;//统计寻找到的个数
+						radditioncx = KS_RatioL_ByThresholdCutting_Copy(
+							rThreshold,
+							prevfsdata,
+							fsdata);//计算跨点的%
+
+						pstArcMarkInf->auFindIt_Frontedge[i] = 1;//输出找到前沿标志
+						pstArcMarkInf->afPos_FrontEdge[i] = (point - 1) + radditioncx;//输出前沿位置
+					}
+
+					break;//找到了就退出
+				}
+			}//内循环
+
+			if (findit_num >= pstArcMarkParam->uScopeLevelNum)//找到足够了,就退出点的循环吧
+			{
+				break;//结束循环
+			}
+		}
+
+		//该统计后沿了
+		findit_num = 0;
+		for (point = pstArcMarkInf->iPeakValuePos; point < pstArcMarkInf->uDataNum_Act - 1; point++)
+		{
+			fsdata = pstArcMarkInf->auDataFilter[point];//获取精采样数据
+			nextfsdata = pstArcMarkInf->auDataFilter[point + 1];//获取下一个精采样数据
+
+			for (i = 0; i < pstArcMarkParam->uScopeLevelNum; i++)
+			{
+				//获取阈值
+				rThreshold = arThreshold[i];
+
+				//检查交点
+				findit = 0;
+				if (pstArcMarkInf->uPolarityIsNegative)//反极性
+				{
+					if (fsdata <= rThreshold && nextfsdata > rThreshold)
+					{
+						findit = 1;
+					}
+				}
+				else//正信号
+				{
+					if (fsdata >= rThreshold && nextfsdata < rThreshold)
+					{
+						findit = 1;
+					}
+				}
+
+
+				// if (findit == 1)
+				// {
+				// 	findit_num += 1;//统计寻找到的个数
+				// 	radditioncx = KS_RatioL_ByThresholdCutting_Copy(
+				// 		rThreshold,
+				// 		fsdata,
+				// 		nextfsdata);//计算跨点的%
+
+				// 	pstArcMarkInf->auFindIt_BackEdge[i] = 1;//输出找到前沿标志
+				// 	pstArcMarkInf->afPos_BackEdge[i] = point + radditioncx;//输出前沿位置
+				// 	break;//找到了就退出
+				// }
+				if (findit == 1)
+				{
+					if (pstArcMarkInf->auFindIt_BackEdge[i] == 0)
+					{
+						findit_num += 1;//统计寻找到的个数
+						radditioncx = KS_RatioL_ByThresholdCutting_Copy(
+							rThreshold,
+							fsdata,
+							nextfsdata);//计算跨点的%
+
+						pstArcMarkInf->auFindIt_BackEdge[i] = 1;//输出找到后沿标志
+						pstArcMarkInf->afPos_BackEdge[i] = point + radditioncx;//输出后沿位置
+					}
+
+					break;//找到了就退出
+				}
+			}//内循环
+
+			if (findit_num >= pstArcMarkParam->uScopeLevelNum)//找到足够了,就退出点的循环吧
+			{
+				break;//结束循环
+			}
+		}	//外循环
+	}
+
+	//前后沿都找完了|我们顺道计算下色标的宽度方便横向误差计算
+
+	for (i = 0; i < pstArcMarkParam->uScopeLevelNum; i++)
+	{
+		pstArcMarkInf->afWidth[i] = 0;
+		if (pstArcMarkInf->auFindIt_Frontedge[i] && pstArcMarkInf->auFindIt_BackEdge[i])//前后沿都找到了
+		{
+			pstArcMarkInf->afWidth[i] = ABS(pstArcMarkInf->afPos_BackEdge[i] - pstArcMarkInf->afPos_FrontEdge[i]);//计算宽度差
+		}
+	}
+	return 0;
+	/*for (i = 0; i < pstArcMarkParam->uScopeLevelNum; i++)
+	{
+		if (pstArcMarkInf->auFindIt_Frontedge[i] && pstArcMarkInf->auFindIt_BackEdge[i])
+		{
+			pstArcMarkInf->afWidth[i] =
+				ABS(pstArcMarkInf->afPos_BackEdge[i] - pstArcMarkInf->afPos_FrontEdge[i]);
+		}
+		else
+		{
+			pstArcMarkInf->auFindIt_Frontedge[i] = 0;
+			pstArcMarkInf->afPos_FrontEdge[i] = 0.0f;
+			pstArcMarkInf->auFindIt_BackEdge[i] = 0;
+			pstArcMarkInf->afPos_BackEdge[i] = 0.0f;
+			pstArcMarkInf->afWidth[i] = 0.0f;
+		}
+	}
+	return 0;*/
+}
+
+
+//精采样数据滤波器-并统计最大值、最小值、还有位置值@2024.8.26
+void KSFsDataFilter_Copy(const ArcMarkParam* pstArcMarkParam, LP_ArcMarkInf const pstArcMarkInf)
+{
+	//这个代码是约定命名规则前实现的，为了减少工作量就不按照命名规则重新实现了@2025.4.9.163931
+	//定义
+	float rsumtotal = 0;
+	uint16_t point = 0, value_max = 0, value_max_pos, value_min = 65535, value_min_pos;
+	uint16_t fsdata, fsdata_tmp;
+	int16_t m;//循环索引
+
+	//实现
+	for (point = 0; point < pstArcMarkInf->uDataNum_Act; point++)
+	{	//获取精采样值
+		if (pstArcMarkInf->puData != 0)
+			fsdata = pstArcMarkInf->puData[point];//获取输入的精采样数据
+		else
+			fsdata = 0;
+
+		//计算平均
+		if (point >= pstArcMarkParam->uFilterpoints - 1 && pstArcMarkParam->uFilterpoints > 1)//2025.8.19.091338+滤波次数超过2
+		{
+			rsumtotal = 0;
+			for (m = point; m >= point + 1 - pstArcMarkParam->uFilterpoints; m--)
+			{
+				//获取精采样值
+				if (pstArcMarkInf->puData != 0)
+					fsdata_tmp = pstArcMarkInf->puData[m];//获取输入的精采样数据
+				else
+					fsdata_tmp = 0;
+
+				rsumtotal += fsdata_tmp;//累计采样值
+			}
+
+			if (pstArcMarkParam->uFilterpoints != 0)
+				pstArcMarkInf->auDataFilter[point] = (uint16_t)(rsumtotal / pstArcMarkParam->uFilterpoints);
+			else
+				pstArcMarkInf->auDataFilter[point] = 0;
+
+		}
+		else//达不到滤波条件，直接记录原始值
+		{
+			pstArcMarkInf->auDataFilter[point] = fsdata;
+		}
+
+		//更新最大值、最小值
+		if (pstArcMarkInf->auDataFilter[point] > value_max)
+		{
+			value_max = pstArcMarkInf->auDataFilter[point];
+			value_max_pos = point;
+		}
+		if (pstArcMarkInf->auDataFilter[point] < value_min)
+		{
+			value_min = pstArcMarkInf->auDataFilter[point];
+			value_min_pos = point;
+		}
+	}
+
+
+	//滤波完成-最大最小值统计完成，更新有效赋值
+	if (pstArcMarkInf->uPolarityIsNegative)//反信号@正常波形
+		//正极性峰值位置就是最小值位置
+	{
+		pstArcMarkInf->iPeakValuePos = value_min_pos;
+		pstArcMarkInf->uPeakRawValue = value_min;
+		pstArcMarkInf->fSignalEffectiveScope = pstArcMarkInf->fBaseLine - value_min;
+	}
+	else//正信号,反极性峰值位置是最大值位置
+	{
+		pstArcMarkInf->iPeakValuePos = value_max_pos;
+		pstArcMarkInf->uPeakRawValue = value_max;
+		pstArcMarkInf->fSignalEffectiveScope = value_max - pstArcMarkInf->fBaseLine;
+	}
+}
+
+
+//获取色标信息@滤波+阈值点信息
+void KSGetMarkInf(const ArcMarkParam* pstArcMarkParam, LP_ArcMarkInf const pstArcMarkInf)
+{
+	//采样滤波以及必要信息计算(最大值、最小值、以及位置值)
+	KSFsDataFilter_Copy(pstArcMarkParam, pstArcMarkInf);
+
+	//计算阀值
+	KSGetThresholdPosEx(pstArcMarkParam, pstArcMarkInf);
+
+	return;
+}
+
+
+
+//获取误差控制bit
+void KSArcErrCtlBitDeal(LP_ArcErrCtlBit const pArcErrCtlBit)
+{
+	//可以重新增加接口配置标志位..
+	//....
+	//....
+	pArcErrCtlBit->calc_follow_pre_eye2 = FALSE;
+	pArcErrCtlBit->calc_follow_any_eye2 = FALSE;
+	pArcErrCtlBit->calc_follow_any_eye1 = FALSE;
+	if (pArcErrCtlBit->use_follow_pre_eye2)//双眼跟踪前一色@常规方案
+		pArcErrCtlBit->calc_follow_pre_eye2 = TRUE;
+	else if (pArcErrCtlBit->use_follow_any_eye2)//双眼跟踪任意色
+		pArcErrCtlBit->calc_follow_any_eye2 = TRUE;
+	else if (pArcErrCtlBit->use_follow_any_eye1)//单眼跟踪任意色
+		pArcErrCtlBit->calc_follow_any_eye1 = TRUE;
+	else//默认双眼跟踪前一色
+		pArcErrCtlBit->calc_follow_pre_eye2 = TRUE;
+	return;
+}
+
+
+//获取实际使用的精彩样数据个数|返回实际使用的精彩样个数
+//uDataSa 精采样数据起始(从0开始)、uArcDoorWidth套色的波门宽度、fPrecision_Act实际精彩样精度值、uDataNum_Max 最大的数据个数
+int16_t KSGetDataNumAct(uint16_t uDataSa, uint8_t uArcDoorWidth, float fPrecision_Act, uint16_t uDataNum_Max, uint16_t* puDataNum_Act)
+{
+
+	uint16_t uTmp = 0;
+	int16_t iRtn = ARC_ERR_NONE;
+
+	//记录实际的采样数据个数
+	uint16_t uDataNum_Act = (uint16_t)KS_GET_FSPOINTS_BYDIS(uArcDoorWidth, fPrecision_Act);
+	uTmp = uDataSa + uDataNum_Act + 1;//实际的数据个数@+1 是因为uDataSa从零开始的
+	if (uDataSa + 1 < uDataNum_Max)//uDataNum_Max=1000的时候uDataSa =0 ~ 999
+	{
+		if (uTmp > uDataNum_Max)//超限@修正采样个数值
+			uDataNum_Act = uDataNum_Max - uDataSa - 1;
+		else;//保持上面的计算值
+	}
+	else//起始值都超限值了
+	{
+		uDataNum_Act = 0;
+		iRtn = ARC_ERR_SAMPLEDATA_OVERFLOW;
+	}
+
+	*puDataNum_Act = uDataNum_Act;
+	return iRtn;
+}
+
+//判断基线（判断门外基线和门内基线逻辑）如果是门外直接输出，如果是门内进入门内基线运算逻辑 wang.c 2026.4.22.090120
+float KSGetBaseLineUse(
+	const ArcMarkParam* pstArcMarkParam,
+	const uint16_t* puiSampleData,
+	uint16_t uTotalPoints,
+	float fRawBase,
+	uint8_t xIsNegPolarity)
+{
+	if (pstArcMarkParam == NULL)
+		return fRawBase;
+
+	if (pstArcMarkParam->xUseInnerBase)
+	{
+		return KSCalcBaseLineInner(
+			puiSampleData,
+			uTotalPoints,
+			xIsNegPolarity,
+			pstArcMarkParam->xCalcBaselineTwice);
+	}
+
+	return fRawBase;
+}
+
+//计算门内基线逻辑Wang.c 2026.4.22.090221
+// float KSCalcBaseLineInner(
+// 	const uint16_t* puiData,
+// 	uint16_t uTotalPoints,
+// 	uint8_t xIsNegPolarity,   // 为了接口兼容保留；老逻辑主流程不依赖它
+// 	uint8_t xCalibrateTwice)
+// {
+// 	uint16_t i;
+// 	float lrReference0 = 0.0f;   // 全点均值
+// 	float lrReference1 = 0.0f;   // 一次分割后基线
+// 	float lrReference2 = 0.0f;   // 二次校准后基线
+// 	float v;
+
+// 	float sumHigh = 0.0f, sumLow = 0.0f;
+// 	uint16_t cntHigh = 0u, cntLow = 0u;
+
+// 	(void)xIsNegPolarity; // 与老版一致性时不参与第二轮选边
+
+// 	if (puiData == NULL || uTotalPoints < 1u || uTotalPoints > 4000u)
+// 		return 0.0f;
+
+// 	// 1) 全点均值
+// 	for (i = 0u; i < uTotalPoints; ++i)
+// 		lrReference0 += (float)puiData[i];
+// 	lrReference0 /= (float)uTotalPoints;
+
+// 	// 2) 以 lrReference0 分两侧，取“点数多的一侧”的均值作为 lrReference1
+// 	sumHigh = 0.0f; cntHigh = 0u;
+// 	sumLow = 0.0f; cntLow = 0u;
+
+// 	for (i = 0u; i < uTotalPoints; ++i)
+// 	{
+// 		v = (float)puiData[i];
+// 		if (v >= lrReference0) { sumHigh += v; cntHigh++; }
+// 		else { sumLow += v; cntLow++; }
+// 	}
+
+// 	if (cntHigh >= cntLow)
+// 		lrReference1 = (cntHigh > 0u) ? (sumHigh / (float)cntHigh) : lrReference0;
+// 	else
+// 		lrReference1 = (cntLow > 0u) ? (sumLow / (float)cntLow) : lrReference0;
+
+// 	if (xCalibrateTwice != 1u)
+// 		return lrReference1;
+
+// 	// 3) 二次校准（与老版同思路：在 ref0/ref1 之间再分段统计，仍取“点数多的一侧”）
+// 	sumHigh = 0.0f; cntHigh = 0u;
+// 	sumLow = 0.0f; cntLow = 0u;
+
+// 	if (lrReference1 > lrReference0)
+// 	{
+// 		for (i = 0u; i < uTotalPoints; ++i)
+// 		{
+// 			v = (float)puiData[i];
+// 			if (v >= lrReference1) { sumHigh += v; cntHigh++; }
+// 			else if (v > lrReference0) { sumLow += v; cntLow++; }
+// 		}
+// 	}
+// 	else if (lrReference1 < lrReference0)
+// 	{
+// 		for (i = 0u; i < uTotalPoints; ++i)
+// 		{
+// 			v = (float)puiData[i];
+// 			if (v < lrReference1) { sumLow += v; cntLow++; }
+// 			else if (v < lrReference0) { sumHigh += v; cntHigh++; }
+// 		}
+// 	}
+// 	else
+// 	{
+// 		return lrReference1;
+// 	}
+
+// 	if (cntHigh >= cntLow)
+// 		lrReference2 = (cntHigh > 0u) ? (sumHigh / (float)cntHigh) : lrReference1;
+// 	else
+// 		lrReference2 = (cntLow > 0u) ? (sumLow / (float)cntLow) : lrReference1;
+
+// 	return lrReference2;
+// }
+
+float KSCalcBaseLineInner(
+	const uint16_t* puiData,
+	uint16_t uTotalPoints,
+	uint8_t xIsNegPolarity,
+	uint8_t xCalibrateTwice)
+{
+	uint16_t i;
+	float lrReference0 = 0.0f;
+	float lrReference1 = 0.0f;
+	float lrReference2 = 0.0f;
+	float v;
+
+	float sumHigh = 0.0f, sumLow = 0.0f;
+	uint16_t cntHigh = 0u, cntLow = 0u;
+
+	if (puiData == NULL || uTotalPoints < 1u || uTotalPoints > 4000u)
+		return 0.0f;
+
+	/* 1) 全点均值 */
+	for (i = 0u; i < uTotalPoints; ++i)
+	{
+		lrReference0 += (float)puiData[i];
+	}
+	lrReference0 /= (float)uTotalPoints;
+
+	/* 2) 以 lrReference0 分两侧 */
+	sumHigh = 0.0f; cntHigh = 0u;
+	sumLow = 0.0f; cntLow = 0u;
+
+	for (i = 0u; i < uTotalPoints; ++i)
+	{
+		v = (float)puiData[i];
+		if (v >= lrReference0)
+		{
+			sumHigh += v;
+			cntHigh++;
+		}
+		else
+		{
+			sumLow += v;
+			cntLow++;
+		}
+	}
+
+	/* 老版逻辑：第一轮按极性固定选边 */
+	if (xIsNegPolarity == 1u)
+	{
+		lrReference1 = (cntHigh > 0u) ? (sumHigh / (float)cntHigh) : lrReference0;
+	}
+	else
+	{
+		lrReference1 = (cntLow > 0u) ? (sumLow / (float)cntLow) : lrReference0;
+	}
+
+	if (xCalibrateTwice != 1u)
+	{
+		return lrReference1;
+	}
+
+	/* 3) 二次校准 */
+	sumHigh = 0.0f; cntHigh = 0u;
+	sumLow = 0.0f; cntLow = 0u;
+
+	if (lrReference1 > lrReference0)
+	{
+		for (i = 0u; i < uTotalPoints; ++i)
+		{
+			v = (float)puiData[i];
+			if (v >= lrReference1)
+			{
+				sumHigh += v;
+				cntHigh++;
+			}
+			else if (v > lrReference0)
+			{
+				sumLow += v;
+				cntLow++;
+			}
+		}
+
+		if (cntHigh >= cntLow)
+		{
+			lrReference2 = (cntHigh > 0u) ? (sumHigh / (float)cntHigh) : lrReference1;
+		}
+		else
+		{
+			lrReference2 = (cntLow > 0u) ? (sumLow / (float)cntLow) : lrReference1;
+		}
+	}
+	else if (lrReference1 < lrReference0)
+	{
+		for (i = 0u; i < uTotalPoints; ++i)
+		{
+			v = (float)puiData[i];
+			if (v < lrReference1)
+			{
+				sumLow += v;
+				cntLow++;
+			}
+			else if (v < lrReference0)
+			{
+				sumHigh += v;
+				cntHigh++;
+			}
+		}
+
+		if (cntHigh >= cntLow)
+		{
+			lrReference2 = (cntHigh > 0u) ? (sumHigh / (float)cntHigh) : lrReference1;
+		}
+		else
+		{
+			lrReference2 = (cntLow > 0u) ? (sumLow / (float)cntLow) : lrReference1;
+		}
+	}
+	else
+	{
+		lrReference2 = lrReference1;
+	}
+
+	return lrReference2;
+}
+
+static void KSUpdateOMKState(
+	LP_ArcErrParam pstArcErrParam,
+	uint8_t* pxFlag_OMK0_PosConfirmed,
+	float* plrOMK0_RefPos,
+	uint16_t* piGateSa_Rec)
+{
+	int16_t iGateWidthRs = 0;
+
+	if (pstArcErrParam == NULL ||
+		pxFlag_OMK0_PosConfirmed == NULL ||
+		plrOMK0_RefPos == NULL ||
+		piGateSa_Rec == NULL)
+	{
+		return;
+	}
+
+	/*
+	 * 波门位置变化过大，清除单标记确认状态
+	 */
+	if (*piGateSa_Rec != pstArcErrParam->auDoorPos[0])
+	{
+		iGateWidthRs = (int16_t)((float)pstArcErrParam->uArcDoorWidth * MAX_RSAMPLE_NUM / pstArcErrParam->fGirth);
+
+		if (ABS((int16_t)(*piGateSa_Rec) - (int16_t)pstArcErrParam->auDoorPos[0]) > iGateWidthRs)
+		{
+			if (*pxFlag_OMK0_PosConfirmed)
+			{
+				*pxFlag_OMK0_PosConfirmed = FALSE;
+				*plrOMK0_RefPos = 0.0f;
+			}
+		}
+	}
+
+	*piGateSa_Rec = pstArcErrParam->auDoorPos[0];
+}
+
+float KS_Average_copy(int8_t xAverageEn,//平均使能
+	int16_t idata,//数据
+	uint8_t byAverageNum,//平均次数
+	int16_t aidatabuff[MAX_AVERAGE_NUM],//缓存的数组
+	uint8_t* pbyCurIndex,//当前的索引@从0开始
+	uint8_t* pxDataInitDne)//平均的数据初始化完成
+{
+	uint8_t byAverageNumUse = 0u;
+	int8_t siIndexEnd = 0u;//循环结束的索引位置
+	uint8_t byCurIndex = *pbyCurIndex;//从0开始
+	uint8_t xDataInitDne = *pxDataInitDne;//数据初始化完成标志
+	int16_t i = 0u, j = 0u;
+	float fSum = 0.0f, fResult = 0.0f;
+#if KS_USE_TRIM_AVERAGE
+	float fMax = 0.0f, fMin = 0.0f;//窗口内最大/最小值@截尾平均用|Yang.zj+ 2026.10.26.210016
+#endif
+
+
+	if (!xAverageEn)//平均未使能@复位数据
+	{
+		if (xDataInitDne || byCurIndex != 0)
+		{
+			for (int16_t i = 0; i < MAX_AVERAGE_NUM; i++)
+				aidatabuff[i] = 0;
+
+			byCurIndex = 0;
+			xDataInitDne = FALSE;
+		}
+		fResult = (float)idata;  // 测试发现平均未使能时，返回原始数据更合理一些
+	}
+	else//平均使能
+	{
+#if KS_USE_TRIM_AVERAGE
+		//截尾平均@2026.10.26:实际选取点数=平均次数+2,去掉1个最大值和1个最小值后平均剩余点;
+		//暖机:缓冲内有效值<4个直接算术平均,>=4个即截尾(除以点数-2)
+		//平均次数合法性处理(次数上限=容量-2,保证窗口=次数+2不超过缓冲)|Yang.zj+ 2026.10.26.210016
+		byAverageNumUse = byAverageNum;
+		if(byAverageNumUse == 0)
+			byAverageNumUse = 1;
+		else if(byAverageNumUse > MAX_AVERAGE_NUM - 2)
+			byAverageNumUse = MAX_AVERAGE_NUM - 2;
+		else
+			;
+		byAverageNumUse = byAverageNumUse + 2;//实际选取的窗口点数=平均次数+2
+#else
+		//平均次数合法性处理
+		byAverageNumUse = byAverageNum;
+		if(byAverageNumUse == 0)
+			byAverageNumUse = 1;
+		else if(byAverageNumUse > MAX_AVERAGE_NUM)
+			byAverageNumUse = MAX_AVERAGE_NUM;
+		else
+			;
+#endif
+
+		if (!xDataInitDne)//数据初始化未完成
+		{
+			if (byCurIndex + 1 >= byAverageNumUse)//数据足够了@置位初始化完成标志
+				xDataInitDne = TRUE;
+
+			if (!xDataInitDne)//未初始化成功，修改平均次数值
+				byAverageNumUse = byCurIndex + 1;//byCurIndex 从0开始
+		}
+		else//数据初始化完成
+		{
+			;
+		}
+
+		//索引处理
+		aidatabuff[byCurIndex] = idata;//数据存储到数组中@最新的数据
+		//计算累计值@截尾平均同时一趟扫描找窗口内最大/最小|Yang.zj+ 2026.10.26.210016
+		siIndexEnd = (int8_t)(byCurIndex + 1) - (int8_t)byAverageNumUse;
+		for(i = byCurIndex; i >= siIndexEnd; i--)//siIndexEnd 有可能是负值
+		{
+			j = i;//i 有可能是负值@不能修改i,写入到临时变量,修改临时变量
+			if (j < 0) j += MAX_AVERAGE_NUM;//拉回到正常范围
+#if KS_USE_TRIM_AVERAGE
+			if(i == byCurIndex)//以最新的点初始化最大最小
+			{
+				fMax = aidatabuff[j];
+				fMin = fMax;
+			}
+			else
+			{
+				if(aidatabuff[j] > fMax)
+					fMax = aidatabuff[j];
+				if(aidatabuff[j] < fMin)
+					fMin = aidatabuff[j];
+			}
+#endif
+			fSum += aidatabuff[j];//计算累计值
+		}
+#if KS_USE_TRIM_AVERAGE
+		if(byAverageNumUse < 4)
+			fResult = fSum / byAverageNumUse;//暖机:不足4个点直接算术平均
+		else
+			fResult = (fSum - fMax - fMin) / (byAverageNumUse - 2);//去掉1个最大值和1个最小值后平均
+#else
+		fResult = fSum / byAverageNumUse;
+#endif
+
+		byCurIndex++;
+		if (byCurIndex >= MAX_AVERAGE_NUM)
+			byCurIndex = 0;
+	}//平均使能
+
+
+	*pbyCurIndex = byCurIndex;//更新
+	*pxDataInitDne = xDataInitDne;
+	return fResult;
+}
+
+static void KSResetAverageState(
+	int16_t aiDataBuff[MAX_AVERAGE_NUM],
+	uint8_t* pbyCurIndex,
+	uint8_t* pxDataInitDne)
+{
+	uint8_t i;
+
+	if (aiDataBuff == NULL || pbyCurIndex == NULL || pxDataInitDne == NULL)
+	{
+		return;
+	}
+
+	for (i = 0u; i < MAX_AVERAGE_NUM; i++)
+	{
+		aiDataBuff[i] = 0;
+	}
+
+	*pbyCurIndex = 0u;
+	*pxDataInitDne = FALSE;
+}
+
+static void KSPostProcessArcErrValue(
+	int16_t* piErrValue,
+	float fAdjustValue,
+	uint8_t xAverageEn,
+	uint8_t byAverageNum,
+	int16_t aiDataBuff[MAX_AVERAGE_NUM],
+	uint8_t* pbyCurIndex,
+	uint8_t* pxDataInitDne,
+	uint8_t* pbyLostCount)
+{
+	float fAverageResult = 0.0f;
+
+	if (piErrValue == NULL || aiDataBuff == NULL || pbyCurIndex == NULL ||
+		pxDataInitDne == NULL || pbyLostCount == NULL)
+	{
+		return;
+	}
+
+	if (*piErrValue != ARC_ERR_LOST)
+	{
+		/* 有效误差：按给定平均参数做平均 */
+		fAverageResult = KS_Average_copy(
+			xAverageEn,
+			*piErrValue,
+			byAverageNum,
+			aiDataBuff,
+			pbyCurIndex,
+			pxDataInitDne);
+
+		*pbyLostCount = 0u;
+
+		/* 再减去误差修正量 */
+		*piErrValue = (int16_t)(fAverageResult - fAdjustValue);
+	}
+	//else
+	//{
+	//	/* 连续丢失超过3幅，清空平均缓存 */
+	//	(*pbyLostCount)++;
+	//	if (*pbyLostCount > 3u)
+	//	{
+	//		KSResetAverageState(aiDataBuff, pbyCurIndex, pxDataInitDne);
+	//		*pbyLostCount = 0u;
+	//	}
+	//}
+	else
+	{
+		*piErrValue = ARC_ERR_LOST;
+
+		(*pbyLostCount)++;
+		if (*pbyLostCount > 3u)
+		{
+			KSResetAverageState(aiDataBuff, pbyCurIndex, pxDataInitDne);
+			*pbyLostCount = 0u;
+		}
+	}
+}
+
+
+
+//从精采样中获取当前色和跟踪色数据的信息
+//色标位于哪路精彩样、精彩样地址、基线值、实际数据个数、使用的波门
+int16_t KSGetCurAndPrevDataInf(uint8_t xIsHorInf,//获取横向计算的信息@否则获取纵向
+	LP_ArcMarkParam const pstArcMarkParam,
+	LP_ArcErrParam  const pstArcErrParam,//套色误差计算参数
+	//计算当前色和前一色的色标必要信息@精彩样数据指针
+	LP_ArcErrInf	const pstArcErrInf,//只更新波门个数变量
+	LP_ArcMarkInf	const pstArcMarkInf_Cur,
+	LP_ArcMarkInf	const pstArcMarkInf_Follow)
+{
+	//定义
+	uint8_t uDoorType = SAMPLE_SINGLE_DOOR;//波门类型@单波门方式、双波门方式
+	uint8_t uArcId = 0;//当前套色id
+	uint8_t uArcFollowId = 0;//套色跟踪id
+	LP_ArcErrCtlBit pArcErrCtlbit = NULL;
+	uint8_t uMarkInterval = pstArcErrParam->uMarkInterval;//色标间隔@mm
+	uint8_t uArcDoorWidth = pstArcErrParam->uArcDoorWidth;//波门宽度@mm
+	uint16_t uPos_Door1 = pstArcErrParam->auDoorPos[0];//第一个波门位置
+	uint16_t uPos_Door2 = pstArcErrParam->auDoorPos[1];//第二个波门位置
+	uint16_t uDataNum_Door1 = pstArcErrParam->auDataNum[0];//第一个波门数据个数@
+	uint16_t uDataNum_Door2 = pstArcErrParam->auDataNum[1];//第二个波门数据个数
+	uint16_t uDataSaTmp = 0;//uDataSa_Cur=0,uDataSa_Prev=0;//当前色\跟踪色信号起始位置相对于精采样数据起点@从0开始的
+	float fPrecision_Act = pstArcErrParam->fPrecision_Act;//实际的采样精度@mm
+	//float fDoorInterval_mm = 0;//当前色起始位置和跟踪色起始位置的间隔@mm
+	float fGirth = pstArcErrParam->fGirth;
+	int16_t iRtn = ARC_ERR_NONE, i;
+
+	if (xIsHorInf)//获取横向信息
+	{
+		uArcId = pstArcErrParam->uArcId_H;//当前套色id
+		uArcFollowId = pstArcErrParam->uArcFollowId_H;//套色跟踪id
+		pArcErrCtlbit = &(pstArcErrParam->stArcErrCtlBit_H);//套色误差跟踪方式位
+	}
+	else//获取的是纵向信息
+	{
+		uArcId = pstArcErrParam->uArcId_V;//当前套色id
+		uArcFollowId = pstArcErrParam->uArcFollowId_V;//套色跟踪id
+		pArcErrCtlbit = &(pstArcErrParam->stArcErrCtlBit_V);//套色误差跟踪方式位
+	}
+
+	//实现
+	//输入参数判断
+	if (pstArcErrParam->uMarkArrangeType == MARK_ARRANGE_OMK)
+	{
+		if (uArcId == 0)
+			iRtn = ARC_ERR_CURID;
+	}
+	else if (pArcErrCtlbit->calc_follow_any_eye1 || pArcErrCtlbit->calc_follow_any_eye2)//单眼跟踪任意色 || 双眼跟踪任意色
+	{
+		if (uArcId > 1)
+		{
+			if (uArcFollowId > 0 && uArcId > uArcFollowId);
+			else
+				iRtn = ARC_ERR_FOLLOWID;
+		}
+		else
+			iRtn = ARC_ERR_CURID;
+	}
+	else if (pArcErrCtlbit->calc_follow_pre_eye2)//双眼跟踪前一色
+	{
+		if (uArcId > 1);
+		else
+			iRtn = ARC_ERR_CURID;
+	}
+	else
+		iRtn = ARC_ERR_FOLLOWTYPE;
+
+
+	if (uMarkInterval == 0)
+		iRtn = ARC_ERR_MARKINTERVAL;
+
+	if (fPrecision_Act == 0)
+		iRtn = ARC_ERR_PRECISION;
+
+	if (uDataNum_Door1 == 0 || uDataNum_Door1 > MAX_FINESAMPLE_NUM)
+		iRtn = ARC_ERR_DATANUM_DOOR1;
+
+	if (uDataNum_Door2 > MAX_FINESAMPLE_NUM)
+		iRtn = ARC_ERR_DATANUM_DOOR2;
+
+	//指针检查
+	if (pstArcErrParam->pauFsDataSa1 == NULL || pstArcErrParam->pauFsDataSa2 == NULL)
+		iRtn = NULL_POINTER;
+
+	//一些信息获取
+	if (uDataNum_Door2 != 0)
+		uDoorType = SAMPLE_DOUBLE_DOOR;//双波门
+	else
+		uDoorType = SAMPLE_SINGLE_DOOR;//单波门
+
+	if (pArcErrCtlbit->calc_follow_pre_eye2)//双眼跟踪前一色
+		pstArcErrInf->uFollowType = FOLLOW_PRE_EYE2;
+	else if (pArcErrCtlbit->calc_follow_any_eye1)//单眼跟踪任意色
+		pstArcErrInf->uFollowType = FOLLOW_ANY_EYE1;
+	else if (pArcErrCtlbit->calc_follow_any_eye2)//双眼跟踪任意色
+		pstArcErrInf->uFollowType = FOLLOW_ANY_EYE2;
+	else
+		pstArcErrInf->uFollowType = FOLLOW_PRE_EYE2;
+
+
+
+
+	//数据初始化
+	pstArcMarkInf_Cur->uDataNum_Act = 0;
+	pstArcMarkInf_Follow->uDataNum_Act = 0;
+	pstArcMarkInf_Cur->fDoorPosSa = 0;
+	pstArcMarkInf_Follow->fDoorPosSa = 0;
+	pstArcMarkInf_Cur->uDataIndex = 0;
+	pstArcMarkInf_Follow->uDataIndex = 0;
+	pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T1;//当前色位于第一路波形@t1
+	pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T2;//跟踪色位于第二路波形@t2
+
+	if (iRtn == ARC_ERR_NONE)
+	{
+		//根据标记类型处理
+		switch (pstArcErrParam->uMarkArrangeType)
+		{
+		case MARK_ARRANGE_VFOR://顺序
+			if (pArcErrCtlbit->calc_follow_any_eye1)//单眼跟踪任意色
+			{
+				if (uDoorType == SAMPLE_SINGLE_DOOR)//只有一个波门方式下@从第一色位置开始采集
+				{
+					//记录色标所在波门当前色和跟踪色相对于同一位置的起始值@用于误差计算
+					pstArcMarkInf_Cur->fDoorPosSa = (float)((uArcId - 1) * uMarkInterval);//相对于单波门起点
+					pstArcMarkInf_Follow->fDoorPosSa = (float)((uArcFollowId - 1) * uMarkInterval);//相对于单波门起点
+
+					//采样数据索引位置
+					pstArcMarkInf_Cur->uDataIndex =
+						(uint16_t)KS_GET_FSPOINTS_BYDIS((uArcId - 1) * uMarkInterval, fPrecision_Act);//当前色标偏移的点数
+
+					pstArcMarkInf_Follow->uDataIndex =
+						(uint16_t)KS_GET_FSPOINTS_BYDIS((uArcFollowId - 1) * uMarkInterval, fPrecision_Act);//跟踪色偏移的点数
+
+					//记录实际的采样数据个数
+					iRtn = KSGetDataNumAct(pstArcMarkInf_Cur->uDataIndex, uArcDoorWidth, fPrecision_Act, uDataNum_Door1, &pstArcMarkInf_Cur->uDataNum_Act);
+					if (iRtn == ARC_ERR_NONE)
+						iRtn = KSGetDataNumAct(pstArcMarkInf_Follow->uDataIndex, uArcDoorWidth, fPrecision_Act, uDataNum_Door1, &pstArcMarkInf_Follow->uDataNum_Act);
+				}
+				else if (uDoorType == SAMPLE_DOUBLE_DOOR)//使用两个波门方式@当前色波门位置为大值(当前色在后面)
+				{
+					//记录色标所在波门当前色和跟踪色相对于同一位置的起始值@用于误差计算
+					pstArcMarkInf_Cur->fDoorPosSa = //单位粗采样值
+						(float)KSLoopMod((int16_t)uPos_Door1 - (int16_t)uPos_Door2, (int16_t)MAX_RSAMPLE_NUM);//相对于波门2(跟踪色)
+					pstArcMarkInf_Cur->fDoorPosSa = KS_GET_DIS_BYRSPOINTS(pstArcMarkInf_Cur->fDoorPosSa, fGirth);//计算为mm
+					pstArcMarkInf_Follow->fDoorPosSa = 0;//
+
+					//采样数据索引位置
+					pstArcMarkInf_Cur->uDataIndex = uDataNum_Door1;//第二个波门是当前色
+					pstArcMarkInf_Follow->uDataIndex = 0;//第一个波门是跟踪色
+
+					//记录实际的采样数据个数
+					pstArcMarkInf_Cur->uDataNum_Act = uDataNum_Door2;
+					pstArcMarkInf_Follow->uDataNum_Act = uDataNum_Door1;
+					//波门的间隔
+					//fDoorInterval_mm =	KS_GET_DIS_BYRSPOINTS(ABS(uPos_Door1 - uPos_Door2),fGirth);
+				}
+				else
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+
+
+				pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T1;//当前色位于第一路波形@t1
+				pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T1;//跟踪色位于第一路波形@t1
+			}
+			else if (pArcErrCtlbit->calc_follow_pre_eye2)//双眼跟踪前一色
+			{
+				uArcFollowId = uArcId - 1;//跟踪的色id
+
+				if (uDoorType == SAMPLE_SINGLE_DOOR)//只有一个波门方式下
+				{
+					// 保持原单波门逻辑，不影响已验证分支
+					pstArcMarkInf_Cur->fDoorPosSa = 0;//相对于波门1
+					pstArcMarkInf_Follow->fDoorPosSa = 0;//相对于波门1
+
+					pstArcMarkInf_Cur->uDataIndex = 0;
+					pstArcMarkInf_Follow->uDataIndex = 0;
+
+					pstArcMarkInf_Cur->uDataNum_Act = uDataNum_Door1;
+					pstArcMarkInf_Follow->uDataNum_Act = uDataNum_Door1;
+				}
+				else if (uDoorType == SAMPLE_DOUBLE_DOOR)//使用两个波门方式
+				{
+					/*
+					* 仅修复：顺序 + 双波门 + 跟前一色。
+					* 老架构前一色永远使用 gate1 的 T1/T2。
+					* 顺序双波门下 gate2 在 gate1 前，数据前半段是 gate2，
+					* gate1 位于第二段。
+					*/
+					pstArcMarkInf_Cur->fDoorPosSa = 0;
+					pstArcMarkInf_Follow->fDoorPosSa = 0;
+
+					pstArcMarkInf_Cur->uDataIndex = uDataNum_Door1;
+					pstArcMarkInf_Follow->uDataIndex = uDataNum_Door1;
+
+					pstArcMarkInf_Cur->uDataNum_Act = uDataNum_Door2;
+					pstArcMarkInf_Follow->uDataNum_Act = uDataNum_Door2;
+				}
+				else
+				{
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+				}
+
+				//色标位置
+				pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T1;//当前色位于第一路波形@t1
+				pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T2;//跟踪色位于第二路波形@t2
+			}
+
+			else if (pArcErrCtlbit->calc_follow_any_eye2)//双眼跟踪任意色
+			{
+				;//这个处理逻辑可能有问题
+				/*
+				if(uDoorType == SAMPLE_SINGLE_DOOR)//只有一个波门方式下
+				{
+					//采样数据索引位置
+					uDataSa_Cur = (uint16_t)KS_GET_FSPOINTS_BYDIS((uArcId-1)*uMarkInterval,fPrecision_Act);
+					uDataSa_Prev = uDataSa_Cur;//跟踪色的位置和当前色的位置一样
+
+					//记录实际的采样数据个数
+					iRtn= KSGetDataNumAct(uDataSa_Cur,uArcDoorWidth,fPrecision_Act,uDataNum_Door1,pstArcMarkInf_Cur->uDataNum_Act);
+					if (iRtn == ARC_ERR_NONE)
+						iRtn= KSGetDataNumAct(uDataSa_Prev,uArcDoorWidth,fPrecision_Act,uDataNum_Door1,pstArcMarkInf_Follow->uDataNum_Act);
+					//波门的间隔
+					//fDoorInterval_mm =	KS_GET_DIS_BYRSPOINTS(ABS(uPos_Door1 - uPos_Door2),fGirth)
+				}
+				else if(uDoorType == SAMPLE_DOUBLE_DOOR)//使用两个波门方式
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+				else
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+
+				//色标位置
+				pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T1;//当前色位于第一路波形@t1
+				pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T2;//跟踪色位于第二路波形@t2
+				*/
+			}
+			else
+				iRtn = ARC_ERR_INVALIDFOLLOWTYPE;//非法的跟踪方式
+
+			break;
+		case MARK_ARRANGE_VREV://纵逆
+			if (pArcErrCtlbit->calc_follow_any_eye1)//单眼跟踪任意色
+			{
+				if (uDoorType == SAMPLE_SINGLE_DOOR)//只有一个波门方式下
+				{
+					//记录色标所在波门当前色和跟踪色相对于同一位置的起始值@用于误差计算
+					pstArcMarkInf_Cur->fDoorPosSa = 0;//相对于单波门起点
+					pstArcMarkInf_Follow->fDoorPosSa = (float)((uArcId - uArcFollowId) * uMarkInterval);//相对于单波门起点
+
+					//采样数据索引位置
+					pstArcMarkInf_Cur->uDataIndex = 0;
+					pstArcMarkInf_Follow->uDataIndex = (uint16_t)KS_GET_FSPOINTS_BYDIS((uArcId - uArcFollowId) * uMarkInterval, fPrecision_Act);
+
+					//记录实际的采样数据个数
+					iRtn = KSGetDataNumAct(pstArcMarkInf_Cur->uDataIndex, uArcDoorWidth, fPrecision_Act, uDataNum_Door1, &pstArcMarkInf_Cur->uDataNum_Act);
+					if (iRtn == ARC_ERR_NONE)
+						iRtn = KSGetDataNumAct(pstArcMarkInf_Follow->uDataIndex, uArcDoorWidth, fPrecision_Act, uDataNum_Door1, &pstArcMarkInf_Follow->uDataNum_Act);
+
+					//虚拟波门的间隔
+					//fDoorInterval_mm = (float)((uArcId - uArcFollowId) * uMarkInterval);
+				}
+				else if (uDoorType == SAMPLE_DOUBLE_DOOR)//使用两个波门方式@当前色波门位置为小值(当前色在前面)
+				{
+					//记录色标所在波门当前色和跟踪色相对于同一位置的起始值@用于误差计算
+					pstArcMarkInf_Cur->fDoorPosSa = 0;//相对于波门1(跟踪色)
+					pstArcMarkInf_Follow->fDoorPosSa = //单位粗采样值
+						KSLoopMod((int16_t)uPos_Door2 - (int16_t)uPos_Door1, (int16_t)MAX_RSAMPLE_NUM);//
+					pstArcMarkInf_Follow->fDoorPosSa = KS_GET_DIS_BYRSPOINTS(pstArcMarkInf_Follow->fDoorPosSa, fGirth);//计算为mm
+
+					//采样数据索引位置
+					pstArcMarkInf_Cur->uDataIndex = 0;
+					pstArcMarkInf_Follow->uDataIndex = uDataNum_Door1;//偏移第一个波门的点数位置,就进入第二个波门的点数位置
+
+					//记录实际的采样数据个数
+					pstArcMarkInf_Cur->uDataNum_Act = uDataNum_Door1;
+					pstArcMarkInf_Follow->uDataNum_Act = uDataNum_Door2;
+
+					//波门的间隔
+					//fDoorInterval_mm =	KS_GET_DIS_BYRSPOINTS(ABS(uPos_Door1 - uPos_Door2),fGirth);
+				}
+				else
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+
+				//色标位置
+				pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T2;//当前色位于第二路波形@t2
+				pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T2;//跟踪色位于第二路波形@t2
+			}
+			else if (pArcErrCtlbit->calc_follow_pre_eye2)//双眼跟踪前一色
+			{
+				uArcFollowId = uArcId - 1;//跟踪的色id
+				if (uDoorType == SAMPLE_SINGLE_DOOR ||//只有一个波门方式下
+					uDoorType == SAMPLE_DOUBLE_DOOR)//使用两个波门方式
+				{
+					//记录色标所在波门当前色和跟踪色相对于同一位置的起始值@用于误差计算
+					pstArcMarkInf_Cur->fDoorPosSa = 0;//相对于波门1
+					pstArcMarkInf_Follow->fDoorPosSa = 0;//相对于波门1
+
+					//采样数据索引位置
+					pstArcMarkInf_Cur->uDataIndex = 0;
+					pstArcMarkInf_Follow->uDataIndex = 0;
+
+					//记录实际的采样数据个数
+					pstArcMarkInf_Cur->uDataNum_Act = uDataNum_Door1;
+					pstArcMarkInf_Follow->uDataNum_Act = uDataNum_Door1;
+
+					//波门的间隔
+					//fDoorInterval_mm = 0;
+				}
+				else
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+
+				//色标位置
+				pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T2;//当前色位于第一路波形@t2
+				pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T1;//跟踪色位于第二路波形@t1
+			}
+			else if (pArcErrCtlbit->calc_follow_any_eye2)//双眼跟踪任意色
+			{
+				;//这个处理逻辑可能有问题
+				/*
+				if(uDoorType == SAMPLE_SINGLE_DOOR)//只有一个波门方式下
+				{
+					//采样数据索引位置
+					uDataSa_Cur = (uint16_t)KS_GET_FSPOINTS_BYDIS((uArcId-1)*uMarkInterval,fPrecision_Act);
+					uDataSa_Prev = uDataSa_Cur;//跟踪色的位置和当前色的位置一样
+
+					//记录实际的采样数据个数
+					iRtn= KSGetDataNumAct(uDataSa_Cur,uArcDoorWidth,fPrecision_Act,uDataNum_Door1,pstArcMarkInf_Cur->uDataNum_Act);
+					if (iRtn == ARC_ERR_NONE)
+						iRtn= KSGetDataNumAct(uDataSa_Prev,uArcDoorWidth,fPrecision_Act,uDataNum_Door1,pstArcMarkInf_Follow->uDataNum_Act);
+				}
+				else if(uDoorType == SAMPLE_DOUBLE_DOOR)//使用两个波门方式
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+				else
+					iRtn = ARC_ERR_DOORNUM;//参数错误
+
+				//色标位置
+				pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T1;//当前色位于第一路波形@t1
+				pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T2;//跟踪色位于第二路波形@t2
+				*/
+			}
+			else
+				iRtn = ARC_ERR_INVALIDFOLLOWTYPE;//非法的跟踪方式
+
+			break;
+		case MARK_ARRANGE_HFOR://横顺
+			iRtn = ARC_ERR_INVALID_MARK_ARRANGE;
+			break;
+		case MARK_ARRANGE_HREV://横逆
+			iRtn = ARC_ERR_INVALID_MARK_ARRANGE;
+			break;
+		case MARK_ARRANGE_OMK://单标记
+			/*
+			 * 单标记模式：
+			 * 1) 这里只负责把“单个色标”的门内数据路由出来；
+			 * 2) Cur / Follow 都指向同一个门内色标。
+			 *
+			 * 说明：
+			 * - 这里默认使用第一个波门的数据；
+			 * - 默认单标记走 T1；
+			 */
+
+			if (uDoorType == SAMPLE_SINGLE_DOOR)
+			{
+				/* 单标记只取第一个波门 */
+				pstArcMarkInf_Cur->fDoorPosSa = 0.0f;
+				pstArcMarkInf_Follow->fDoorPosSa = 0.0f;
+
+				pstArcMarkInf_Cur->uDataIndex = 0;
+				pstArcMarkInf_Follow->uDataIndex = 0;
+
+				// 点数直接用第一个波门
+				pstArcMarkInf_Cur->uDataNum_Act = uDataNum_Door1;
+				pstArcMarkInf_Follow->uDataNum_Act = uDataNum_Door1;
+
+				//单标记当前默认使用 T1
+				pstArcMarkInf_Cur->uIsT1T2Pos = SAMPLE_T1;
+				pstArcMarkInf_Follow->uIsT1T2Pos = SAMPLE_T1;
+
+				/*
+				   先让 Cur / Follow 的 id 相同
+				 * 真正的单标记误差，不走“Cur-Follow”的双标记公式。
+				 */
+				uArcFollowId = uArcId;
+			}
+			else
+			{
+				iRtn = ARC_ERR_DOORNUM;
+			}
+
+			break;
+		default:
+			iRtn = ARC_ERR_INVALID_MARK_ARRANGE;
+			break;
+		}
+	}
+	else;//参数输入不正确
+
+
+	pstArcErrParam->uArcDoorType = uDoorType;//记录下
+	//pstArcErrParam->fDoorInterval_mm = fDoorInterval_mm;
+	pstArcMarkInf_Cur->uId = uArcId;
+	pstArcMarkInf_Follow->uId = uArcFollowId;
+
+	//当前色和跟踪色处理
+	LP_ArcMarkInf pArcMarkInfTmp = 0;
+	for (i = 0; i < 2; i++)
+	{
+		if (i == 1)//当前色
+		{
+			pArcMarkInfTmp = pstArcMarkInf_Cur;
+			//uDataSaTmp = uDataSa_Cur;
+		}
+		else//跟踪色
+		{
+			pArcMarkInfTmp = pstArcMarkInf_Follow;
+			//uDataSaTmp = uDataSa_Prev;
+		}
+
+		if (iRtn == ARC_ERR_NONE)
+		{
+			uDataSaTmp = pArcMarkInfTmp->uDataIndex;
+			switch (pArcMarkInfTmp->uIsT1T2Pos)
+			{
+			case SAMPLE_T1:
+				pArcMarkInfTmp->puData = &(*pstArcErrParam->pauFsDataSa1)[uDataSaTmp];
+
+				pArcMarkInfTmp->uPolarityIsNegative =
+					(uDoorType == SAMPLE_DOUBLE_DOOR && pArcMarkInfTmp->uDataIndex >= uDataNum_Door1)
+					? pstArcMarkParam->uPolarityIsNeg_T1_Door2
+					: pstArcMarkParam->uPolarityIsNeg_T1_Door1;
+
+				pArcMarkInfTmp->fBaseLine = KSGetBaseLineUse(
+					pstArcMarkParam,
+					pArcMarkInfTmp->puData,
+					pArcMarkInfTmp->uDataNum_Act,
+					pstArcErrParam->fBase1,
+					(pArcMarkInfTmp->uPolarityIsNegative == SIGNAL_IS_NEGATIVE) ? 1u : 0u);
+				//通过小信号标志位赋值给fSignalGate_Sample具体的阈值
+				pArcMarkInfTmp->fSignalGate_Sample =
+					pstArcErrParam->xSmallSignal_T1 ?
+					pstArcMarkParam->fMinimumSignalval_Sample :
+					pstArcMarkParam->fSmallSignalval_Sample;
+				break;
+
+			case SAMPLE_T2:
+				pArcMarkInfTmp->puData = &(*pstArcErrParam->pauFsDataSa2)[uDataSaTmp];
+
+				pArcMarkInfTmp->uPolarityIsNegative =
+					(uDoorType == SAMPLE_DOUBLE_DOOR && pArcMarkInfTmp->uDataIndex >= uDataNum_Door1)
+					? pstArcMarkParam->uPolarityIsNeg_T2_Door2
+					: pstArcMarkParam->uPolarityIsNeg_T2_Door1;
+
+				pArcMarkInfTmp->fBaseLine = KSGetBaseLineUse(
+					pstArcMarkParam,
+					pArcMarkInfTmp->puData,
+					pArcMarkInfTmp->uDataNum_Act,
+					pstArcErrParam->fBase2,
+					(pArcMarkInfTmp->uPolarityIsNegative == SIGNAL_IS_NEGATIVE) ? 1u : 0u);
+
+				pArcMarkInfTmp->fSignalGate_Sample =
+					pstArcErrParam->xSmallSignal_T2 ?
+					pstArcMarkParam->fMinimumSignalval_Sample :
+					pstArcMarkParam->fSmallSignalval_Sample;
+				break;
+
+			default:
+				pArcMarkInfTmp->puData = 0;
+				pArcMarkInfTmp->fBaseLine = 0;
+				pArcMarkInfTmp->fSignalGate_Sample = pstArcMarkParam->fSmallSignalval_Sample;
+				break;
+			}
+		}
+		else
+			pArcMarkInfTmp->puData = 0;
+	}
+	return iRtn;
+}
+
+
+
+//使用输入2个色标信息计算纵向偏差、横向偏差
+//当前色和跟踪色做比较
+//不计算就返回0,计算失败就返回丢失。
+int16_t KSCalcErrByDataInf(
+	//uint8_t xUseHorInf,//使用横向计算误差的色标信息|反之为纵向
+	uint8_t xErrIsRev_V,//纵向误差取反
+	uint8_t xErrIsRev_H,//横向误差取反
+
+	LP_ArcErrParam pstArcErrParam,
+	LP_ArcMarkParam pstArcMarkParam,
+	LP_ArcMarkInf pstArcMarkInf_Cur,//确保id被写入了
+	LP_ArcMarkInf pstArcMarkInf_Follow,//确保id被写入了
+	int16_t* piErr_V,//输出计算的纵向误差
+	int16_t* piErr_H)//输出计算的横向误差
+{
+	int16_t iRtn = ARC_ERR_NONE;
+	int16_t iErr_V = 0, iErr_H = 0;
+	uint8_t uIndexTmp = 0;//阈值索引临时变量@使用的
+	uint8_t	xPosIsValid = FALSE;//位置值是有效的 
+	uint8_t	xWigthIsValid = FALSE;//宽度是有效的 
+	//float fTmp_V=0,fTmp_H=0;
+	float fTmp = 0;
+	float fPos_Cur = 0, fPos_Follow = 0;//位置@相对于波门-单位精采样点数
+	float fAbsPos_Cur = 0, fAbsPos_Follow = 0;//位置@相对于同一起点-单位mm
+	float fIntervalPos = 0, fIntervalPos_Tar;//当前色和跟踪色间隔位置mm\目标间隔距离mm
+	float fWigth_Cur = 0, fWigth_Follow = 0;//宽度@单位精采样点
+	float fWigth_Cur_mm = 0, fWigth_Follow_mm = 0;//宽度@单位mm
+	//获取的一些参数值
+	//uint8_t uCalcArcType = pstArcErrParam->uCalcArcErrType;//计算纵向还是横向标志
+	//uint8_t uArcDoorType = pstArcErrParam->uArcDoorType;//使用的波门个数
+	float fPrecision_Act = pstArcErrParam->fPrecision_Act;//实际的采样精度值
+	uint8_t uMarkInterval = pstArcErrParam->uMarkInterval;//色标间隔@mm
+	//获取当前色标和跟踪色标的波形位置
+	uint8_t uIsT1T2Pos_Cur = pstArcMarkInf_Cur->uIsT1T2Pos;
+	uint8_t uIsT1T2Pos_Follow = pstArcMarkInf_Follow->uIsT1T2Pos;
+	//获取当前色和跟踪色的id
+	//uint8_t uId_Cur = 0;
+	//uint8_t uId_Follow = 0;
+	uint8_t uId_Cur = pstArcMarkInf_Cur->uId;//当前套色id
+	uint8_t uId_Follow = pstArcMarkInf_Follow->uId;//套色跟踪id
+
+
+	/*
+		if (xUseHorInf)//使用横向计算的信息@使用获取的计算横向误差的色标数据计算纵横向误差
+		{
+			uId_Cur = pstArcMarkInf_Cur->uId;//当前套色id
+			uId_Follow = pstArcMarkInf_Follow->uId;//套色跟踪id
+		}
+		else//使用纵向计算的信息@使用获取的计算纵向误差的色标数据计算纵横向误差
+		{
+			uint8_t uId_Cur = pstArcMarkInf_Cur->uId;//当前套色id
+			uint8_t uId_Follow = pstArcMarkInf_Follow->uId;//套色跟踪id
+		}
+	*/
+	//色序id检查
+	if (uId_Cur == 0)	iRtn = ARC_ERR_CURID;
+	if (uId_Follow == 0) iRtn = ARC_ERR_FOLLOWID;
+
+	//传入补偿参数
+	if (pstArcMarkParam->markVLen || pstArcMarkParam->markHLen != 0)//传入补偿参数
+	{
+		pstArcMarkInf_Cur->horizontal_comp_ratio =
+			(float)pstArcMarkParam->markHLen / (float)pstArcMarkParam->markVLen;
+		pstArcMarkInf_Follow->horizontal_comp_ratio =
+			(float)pstArcMarkParam->markHLen / (float)pstArcMarkParam->markVLen;
+	}
+	else
+	{
+		pstArcMarkInf_Cur->horizontal_comp_ratio = 1.0f;
+		pstArcMarkInf_Follow->horizontal_comp_ratio = 1.0f;
+	}
+
+
+	if (iRtn == ARC_ERR_NONE)//没错误
+	{
+		//当前色
+		KSGetMarkInf(pstArcMarkParam, pstArcMarkInf_Cur);
+		//跟踪色
+		KSGetMarkInf(pstArcMarkParam, pstArcMarkInf_Follow);
+
+		//纵向计算使用
+		//检查三段阈值 并记录前后沿位置
+		for (uint8_t i = 0; i < pstArcMarkParam->uScopeLevelNum; i++)
+		{
+			uIndexTmp = i;//之前逻辑只找固定阈值,修改为循环后,为了减少修改就将i值写给使用的索引值了
+			if (pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VFLP ||
+				pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VFLN)//使用前沿计算
+			{
+				if (pstArcMarkInf_Cur->auFindIt_Frontedge[uIndexTmp] && pstArcMarkInf_Follow->auFindIt_Frontedge[uIndexTmp])
+				{
+					xPosIsValid = TRUE;
+					fPos_Cur = pstArcMarkInf_Cur->afPos_FrontEdge[uIndexTmp];
+					fPos_Follow = pstArcMarkInf_Follow->afPos_FrontEdge[uIndexTmp];
+				}
+				else//未找到
+					xPosIsValid = FALSE;
+
+				//沿信息
+				pstArcMarkInf_Cur->uEdgeInf = MARK_FRONTEDGE;
+				pstArcMarkInf_Follow->uEdgeInf = MARK_FRONTEDGE;
+			}
+			else if (pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VBLP ||
+				pstArcMarkParam->uMarkType == MARK_TPYE_TRAPE_VBLN)//使用后沿计算
+			{
+				if (pstArcMarkInf_Cur->auFindIt_BackEdge[uIndexTmp] && pstArcMarkInf_Follow->auFindIt_BackEdge[uIndexTmp])
+				{
+					xPosIsValid = TRUE;
+					fPos_Cur = pstArcMarkInf_Cur->afPos_BackEdge[uIndexTmp];
+					fPos_Follow = pstArcMarkInf_Follow->afPos_BackEdge[uIndexTmp];
+				}
+				else//未找到
+					xPosIsValid = FALSE;
+
+				//沿信息
+				pstArcMarkInf_Cur->uEdgeInf = MARK_BACKEDGE;
+				pstArcMarkInf_Follow->uEdgeInf = MARK_BACKEDGE;
+			}
+			else//矩形\对称三角等
+			{
+
+				if (pstArcMarkInf_Cur->auFindIt_Frontedge[uIndexTmp] && pstArcMarkInf_Cur->auFindIt_BackEdge[uIndexTmp])
+				{
+					xPosIsValid = TRUE;
+					fPos_Cur = pstArcMarkInf_Cur->afPos_FrontEdge[uIndexTmp] +
+						pstArcMarkInf_Cur->afPos_BackEdge[uIndexTmp];
+					fPos_Cur = ABS(fPos_Cur) / 2;
+				}
+				else//未找到
+					xPosIsValid = FALSE;
+
+
+				if (xPosIsValid)//当前色找到了
+				{
+					if (pstArcMarkInf_Follow->auFindIt_Frontedge[uIndexTmp] && pstArcMarkInf_Follow->auFindIt_BackEdge[uIndexTmp])
+					{
+						xPosIsValid = TRUE;
+						fPos_Follow = pstArcMarkInf_Follow->afPos_FrontEdge[uIndexTmp] +
+							pstArcMarkInf_Follow->afPos_BackEdge[uIndexTmp];
+						fPos_Follow = ABS(fPos_Follow) / 2;
+					}
+					else//未找到
+						xPosIsValid = FALSE;
+				}
+
+				//沿信息
+				pstArcMarkInf_Cur->uEdgeInf = MARK_MID;
+				pstArcMarkInf_Follow->uEdgeInf = MARK_MID;
+
+			}//不同色标形式条件
+
+			if (xPosIsValid)//找到了阈值后|就退出循环
+			{
+				pstArcMarkInf_Cur->uScopeLevelId = i + 1;
+				pstArcMarkInf_Follow->uScopeLevelId = i + 1;
+				break;
+			}
+		}//循环
+
+		//计算纵向绝对位置值单位mm@相对于同一个起点
+		if (xPosIsValid)//位置有效
+		{
+			//当前色
+			fTmp = KS_GET_DIS_BYFSPOINTS(fPos_Cur, fPrecision_Act);//计算为mm
+			fAbsPos_Cur = fTmp + pstArcMarkInf_Cur->fDoorPosSa;
+
+			//跟踪色
+			fTmp = KS_GET_DIS_BYFSPOINTS(fPos_Follow, fPrecision_Act);//计算为mm
+			fAbsPos_Follow = fTmp + pstArcMarkInf_Follow->fDoorPosSa;
+
+			fIntervalPos = fAbsPos_Cur - fAbsPos_Follow;//间隔位置mm
+		}
+
+
+
+		//目标间隔距离mm@用于计算误差
+		if (uIsT1T2Pos_Cur == uIsT1T2Pos_Follow)//在同一路
+			fIntervalPos_Tar = ((float)uId_Cur - (float)uId_Follow) * uMarkInterval;
+		else//不在同一路
+			fIntervalPos_Tar = (((float)uId_Cur - (float)uId_Follow) - 1) * uMarkInterval;
+
+		//逆序的时候标准间距取反
+		if (pstArcErrParam->uMarkArrangeType == MARK_ARRANGE_VREV)
+			fIntervalPos_Tar = -fIntervalPos_Tar;
+
+		//纵向
+		if (xPosIsValid)
+		{
+			fTmp = fIntervalPos - fIntervalPos_Tar;//当前间隔和目标间隔的差值
+
+			// 纵逆先取反
+			if (pstArcErrParam->uMarkArrangeType == MARK_ARRANGE_VREV)
+				fTmp = -fTmp;
+
+			if (xErrIsRev_V) fTmp = -fTmp;//误差取反
+
+			iErr_V = (int16_t)(fTmp * 100);//转换为丝
+		}
+		else
+			iErr_V = ARC_ERR_LOST;
+
+
+
+
+		//横向误差计算
+			//获取色标的宽度值@横向-精采样点数
+		fWigth_Cur = pstArcMarkInf_Cur->afWidth[uIndexTmp];
+		fWigth_Follow = pstArcMarkInf_Follow->afWidth[uIndexTmp];
+		if (fWigth_Cur != 0 && fWigth_Follow != 0)//宽度不等于0 则认为是可以计算的
+			xWigthIsValid = TRUE;
+		else
+			xWigthIsValid = FALSE;
+
+		if (xWigthIsValid)
+		{
+			float Ratio_H = pstArcMarkInf_Cur->horizontal_comp_ratio;
+			if (Ratio_H < 0.0f) Ratio_H = -Ratio_H; // 先取正
+
+			// 符号由 markType 判断决定
+			if (pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VFLP ||
+				pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VBLP)
+			{
+				// Ratio_H 保持正
+			}
+			else if (pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VFLN ||
+				pstArcMarkParam->uMarkType == MARK_TPYE_TRAPE_VBLN)
+			{
+				Ratio_H = -Ratio_H;
+			}
+
+			// 把补偿后的宽度写回结构体
+			pstArcMarkInf_Cur->afWidthComp[uIndexTmp] = pstArcMarkInf_Cur->afWidth[uIndexTmp] * Ratio_H;
+			pstArcMarkInf_Follow->afWidthComp[uIndexTmp] = pstArcMarkInf_Follow->afWidth[uIndexTmp] * Ratio_H;
+
+			// 用补偿后宽度参与计算
+			fWigth_Cur = pstArcMarkInf_Cur->afWidthComp[uIndexTmp];
+			fWigth_Follow = pstArcMarkInf_Follow->afWidthComp[uIndexTmp];
+
+			// 换算为 mm
+			fWigth_Cur_mm = KS_GET_DIS_BYFSPOINTS(fWigth_Cur, fPrecision_Act);
+			fWigth_Follow_mm = KS_GET_DIS_BYFSPOINTS(fWigth_Follow, fPrecision_Act);
+
+			if (pstArcMarkParam->uMarkType == MARK_TYPE_LINE)
+			{
+				iErr_H = 0;
+			}
+			else
+			{
+				fTmp = fWigth_Cur_mm - fWigth_Follow_mm; // mm
+
+				// 纵逆先取反
+				if (pstArcErrParam->uMarkArrangeType == MARK_ARRANGE_VREV)
+					fTmp = -fTmp;
+
+				if (xErrIsRev_H) fTmp = -fTmp;           // 误差取反
+				iErr_H = (int16_t)(fTmp * 100);          // 转换为丝
+			}
+		}
+		else
+		{
+			// 无效时清0补偿宽度，避免残留
+			pstArcMarkInf_Cur->afWidthComp[uIndexTmp] = 0.0f;
+			pstArcMarkInf_Follow->afWidthComp[uIndexTmp] = 0.0f;
+			iErr_H = ARC_ERR_LOST;
+		}
+
+	}//没有错误
+	else//发生错误了
+	{
+		iErr_V = ARC_ERR_LOST;
+		iErr_H = ARC_ERR_LOST;
+	}
+
+	*piErr_V = iErr_V;
+	*piErr_H = iErr_H;
+	return iRtn;
+}
+
+static uint8_t  s_xFlag_OMK0_PosConfirmed = FALSE;
+static float    s_lrOMK0_RefPos = 0.0f;
+static uint16_t s_iGateSa_Rec = 0u;
+static uint8_t  s_xPrevIsOMK = FALSE;
+
+int16_t KSCalcErrByDataInf_OMK(
+	uint8_t xErrIsRev_V,                  // 纵向误差取反
+	LP_ArcErrParam pstArcErrParam,        // 误差参数结构体
+	LP_ArcMarkParam pstArcMarkParam,      // 色标参数结构体
+	LP_ArcMarkInf pstArcMarkInf_follow,   // 跟踪色标信息
+	int16_t* piErr_V,                     // 输出：纵向误差
+	int16_t* piErr_H)                     // 输出：横向误差
+{
+	int16_t  iRtn = ARC_ERR_NONE;
+	int16_t  iErr_V = ARC_ERR_LOST;
+	int16_t  iErr_H = ARC_ERR_LOST;
+
+	uint8_t  xReqCommit = FALSE;       // 单标记确认按钮请求
+	uint8_t  xPosIsValid = FALSE;      // 位置值有效标志
+	uint8_t  iLevel = 0;               // 阈值索引临时变量
+	float    lrPos = 0.0f;             // 相对波门位置（精采样点数）
+	float    lrAbsPos = 0.0f;           // 绝对位置（mm）
+	float    lrTmpVal = 0.0f;           // 临时计算变量
+
+	// 空指针校验
+	if (pstArcErrParam == NULL || pstArcMarkParam == NULL ||
+		pstArcMarkInf_follow == NULL || piErr_V == NULL || piErr_H == NULL)
+	{
+		return NULL_POINTER;
+	}
+
+	// 色标ID校验
+	if (pstArcMarkInf_follow->uId == 0)
+	{
+		*piErr_V = ARC_ERR_LOST;
+		*piErr_H = ARC_ERR_LOST;
+		return ARC_ERR_FOLLOWID;
+	}
+
+	// 外部确认按钮请求
+	xReqCommit = pstArcErrParam->xOMK_ReqCommit;
+
+	// 单标记确认状态更新
+	KSUpdateOMKState(
+		pstArcErrParam,
+		&s_xFlag_OMK0_PosConfirmed,
+		&s_lrOMK0_RefPos,
+		&s_iGateSa_Rec);
+
+	// 获取色标信息
+	KSGetMarkInf(pstArcMarkParam, pstArcMarkInf_follow);
+
+	// 按前沿/后沿/中线 识别色标位置
+	for (iLevel = 0; iLevel < pstArcMarkParam->uScopeLevelNum; iLevel++)
+	{
+		// 前沿触发类型
+		if (pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VFLP ||
+			pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VFLN)
+		{
+			if (pstArcMarkInf_follow->auFindIt_Frontedge[iLevel])
+			{
+				xPosIsValid = TRUE;
+				lrPos = pstArcMarkInf_follow->afPos_FrontEdge[iLevel];
+				pstArcMarkInf_follow->uEdgeInf = MARK_FRONTEDGE;
+				pstArcMarkInf_follow->uScopeLevelId = iLevel + 1;
+				break;
+			}
+		}
+		// 后沿触发类型
+		else if (pstArcMarkParam->uMarkType == MARK_TYPE_TRAPE_VBLP ||
+			pstArcMarkParam->uMarkType == MARK_TPYE_TRAPE_VBLN)
+		{
+			if (pstArcMarkInf_follow->auFindIt_BackEdge[iLevel])
+			{
+				xPosIsValid = TRUE;
+				lrPos = pstArcMarkInf_follow->afPos_BackEdge[iLevel];
+				pstArcMarkInf_follow->uEdgeInf = MARK_BACKEDGE;
+				pstArcMarkInf_follow->uScopeLevelId = iLevel + 1;
+				break;
+			}
+		}
+		// 中线计算类型
+		else
+		{
+			if (pstArcMarkInf_follow->auFindIt_Frontedge[iLevel] &&
+				pstArcMarkInf_follow->auFindIt_BackEdge[iLevel])
+			{
+				xPosIsValid = TRUE;
+				lrPos = pstArcMarkInf_follow->afPos_FrontEdge[iLevel] +
+					pstArcMarkInf_follow->afPos_BackEdge[iLevel];
+				lrPos = ABS(lrPos) / 2.0f;
+				pstArcMarkInf_follow->uEdgeInf = MARK_MID;
+				pstArcMarkInf_follow->uScopeLevelId = iLevel + 1;
+				break;
+			}
+		}
+	}
+
+	// 位置有效，计算纵向误差
+	if (xPosIsValid)
+	{
+		// 计算绝对位置（mm）= 波门绝对位置 + 门内位置
+		lrAbsPos = KS_GET_DIS_BYRSPOINTS(pstArcErrParam->auDoorPos[0], pstArcErrParam->fGirth) +
+			KS_GET_DIS_BYFSPOINTS(lrPos, pstArcErrParam->fPrecision_Act);
+
+		// 确认按钮触发，更新参考位置
+		if (xReqCommit)
+		{
+			s_xFlag_OMK0_PosConfirmed = FALSE;
+			s_lrOMK0_RefPos = lrAbsPos;
+			s_xFlag_OMK0_PosConfirmed = TRUE;
+		}
+
+		// 未确认：误差丢失；已确认：计算实际误差
+		if (!s_xFlag_OMK0_PosConfirmed)
+		{
+			iErr_V = ARC_ERR_LOST;
+		}
+		else
+		{
+			lrTmpVal = s_lrOMK0_RefPos - lrAbsPos;
+
+			// 纵向误差取反控制
+			if (xErrIsRev_V)
+			{
+				lrTmpVal = -lrTmpVal;
+			}
+
+			// 转换为int16类型（放大100倍）
+			iErr_V = (int16_t)(lrTmpVal * 100.0f);
+		}
+	}
+	// 位置无效，标记丢失
+	else
+	{
+		iErr_V = ARC_ERR_LOST;
+	}
+
+	// 单标记模式无横向误差
+	iErr_H = ARC_ERR_LOST;
+
+	// 输出结果
+	*piErr_V = iErr_V;
+	*piErr_H = iErr_H;
+
+	return iRtn;
+}
+
+
+
+//根据输入的精采样数据进行套色误差计算
+void KSCalcArcErr_VH(
+
+	WORD* i_puiFineData1,
+	WORD* i_puiFineData2,
+	StAxisParam* i_pstStAxisParam,
+	StGrpParam* i_pstStGrpParam,
+	REAL i_alrBase[2],
+	BYTE* i_pxOK_PosConfirmed,
+	BYTE i_xOK_FromMaster,//新增成员，为了赋值
+
+	LP_ArcMarkParam const pstArcMarkParam,//套色标记的参数
+	LP_ArcMarkInf	const pstArcMarkInf_Cur_V,//当前色标信息@纵向
+	LP_ArcMarkInf	const pstArcMarkInf_Follow_V,//跟踪色标信息@纵向
+	LP_ArcMarkInf	const pstArcMarkInf_Cur_H,//当前色标信息@横向
+	LP_ArcMarkInf	const pstArcMarkInf_Follow_H,//跟踪色标信息@横向
+	LP_ArcErrParam  const pstArcErrParam,//误差计算的参数
+	LP_ArcErrInf	const pstArcErrInf_V,//纵向误差计算信息
+	LP_ArcErrInf	const pstArcErrInf_H)//纵向误差计算信息
+{
+	//定义
+	uint8_t xSameArcMark = FALSE;//同一个套色标记@指的是跟踪色
+	//uint8_t uCalcArcErrType = CALC_ARCERR_V;//计算套色误差的形式@判断计算纵向、横向、纵横向|默认计算纵向
+	int16_t iErr_V = ARC_ERR_LOST, iErr_H = ARC_ERR_LOST;
+	static uint8_t xInit = FALSE;//初始化标志
+
+	/* 误差平均缓存与状态 */
+	static int16_t s_aiAverageBuff_V[MAX_AVERAGE_NUM] = { 0 };
+	static int16_t s_aiAverageBuff_H[MAX_AVERAGE_NUM] = { 0 };
+	static uint8_t s_byAverageIndex_V = 0u;
+	static uint8_t s_byAverageIndex_H = 0u;
+	static uint8_t s_xAverageInitDne_V = FALSE;
+	static uint8_t s_xAverageInitDne_H = FALSE;
+	static uint8_t s_byLostCount_V = 0u;
+	static uint8_t s_byLostCount_H = 0u;
+	//结构体初始化
+	if (!xInit)
+	{
+		xInit = TRUE;
+		KSInitArcMarkParam(pstArcMarkParam);
+		KSInitArcMarkInf(pstArcMarkInf_Cur_V);
+		KSInitArcMarkInf(pstArcMarkInf_Follow_V);
+		KSInitArcMarkInf(pstArcMarkInf_Cur_H);
+		KSInitArcMarkInf(pstArcMarkInf_Follow_H);
+
+		KSInitArcErrParam(pstArcErrParam);
+		KSInitArcErrInf(pstArcErrInf_V);
+		KSInitArcErrInf(pstArcErrInf_H);
+	}
+
+	//从外部获取需要的参数@先写为定值进行测试，已修改为入参
+	KSCalcErrParamInter(
+		i_puiFineData1,
+		i_puiFineData2,
+		i_pstStAxisParam,
+		i_pstStGrpParam,
+		i_alrBase,
+		i_pxOK_PosConfirmed,
+		i_xOK_FromMaster,
+		pstArcMarkParam,
+		pstArcErrParam);
+
+
+	{
+		uint8_t xCurIsOMK = (pstArcErrParam->uMarkArrangeType == MARK_ARRANGE_OMK) ? TRUE : FALSE;
+
+		if (xCurIsOMK && !s_xPrevIsOMK)
+		{
+			s_xFlag_OMK0_PosConfirmed = FALSE;
+			s_lrOMK0_RefPos = 0.0f;
+			s_iGateSa_Rec = pstArcErrParam->auDoorPos[0];
+		}
+
+		s_xPrevIsOMK = xCurIsOMK;
+	}
+
+
+	/*******************************************获取纵向一些信息*******************************************************/
+
+	//获取纵向一些信息
+	//纵向获取计算的方式
+	KSArcErrCtlBitDeal(&(pstArcErrParam->stArcErrCtlBit_V));
+	//获取当前色和跟踪色数据信息
+	//纵向套印色标信息获取@精彩样数据起始地址和数据个数等信息
+	pstArcErrInf_V->iArcErrCode =
+		KSGetCurAndPrevDataInf(GET_MARKINF_VER, pstArcMarkParam, pstArcErrParam, pstArcErrInf_V, pstArcMarkInf_Cur_V, pstArcMarkInf_Follow_V);
+
+	/*******************************************获取横向一些信息*******************************************************/
+
+	//获取横向一些信息
+	//横向获取计算的方式
+	KSArcErrCtlBitDeal(&(pstArcErrParam->stArcErrCtlBit_H));
+	//获取当前色和跟踪色数据信息
+	//纵向套印色标信息获取@精彩样数据起始地址和数据个数等信息
+	pstArcErrInf_H->iArcErrCode =
+		KSGetCurAndPrevDataInf(GET_MARKINF_HOR, pstArcMarkParam, pstArcErrParam, pstArcErrInf_H, pstArcMarkInf_Cur_H, pstArcMarkInf_Follow_H);
+
+
+
+	/*******************************************单标记专用路径*******************************************************/
+	if (pstArcErrParam->uMarkArrangeType == MARK_ARRANGE_OMK)
+	{
+		if (pstArcErrInf_V->iArcErrCode == ARC_ERR_NONE)
+		{
+			KSCalcErrByDataInf_OMK(
+				FALSE,//纵向误差取反
+				pstArcErrParam,
+				pstArcMarkParam,
+				pstArcMarkInf_Follow_V,
+				&iErr_V,//输出计算的纵向误差
+				&iErr_H);//输出计算的横向误差
+		}
+		else
+		{
+			iErr_V = ARC_ERR_LOST;
+			iErr_H = ARC_ERR_LOST;
+		}
+
+		/* 单标记纵向结果 */
+		pstArcErrInf_V->iErrValue = iErr_V;
+		pstArcErrInf_V->iErrValue__ = iErr_H;
+
+		/* 单标记无横向误差 */
+		pstArcErrInf_H->iErrValue = iErr_H;
+		pstArcErrInf_H->iErrValue__ = ARC_ERR_LOST;
+
+
+		/*******************************************误差后处理：三幅平均 + 修正量*******************************************************/
+		KSPostProcessArcErrValue(
+			&pstArcErrInf_V->iErrValue,
+			i_pstStAxisParam->lrAdjust_V * 100.0f,
+			(i_pstStAxisParam->iAverage_V > 1) ? TRUE : FALSE,
+			(uint8_t)i_pstStAxisParam->iAverage_V,//纵向平均幅数
+			s_aiAverageBuff_V,
+			&s_byAverageIndex_V,
+			&s_xAverageInitDne_V,
+			&s_byLostCount_V);
+		/*
+		 * 单标记横向无效：
+		 * 这里也走一次后处理，仅用于连续丢失时清空横向平均缓存。
+		 * 平均关闭，修正量无效。
+		 */
+		KSPostProcessArcErrValue(
+			&pstArcErrInf_H->iErrValue,
+			0.0f,
+			FALSE,
+			1u,
+			s_aiAverageBuff_H,
+			&s_byAverageIndex_H,
+			&s_xAverageInitDne_H,
+			&s_byLostCount_H);
+
+		pstArcErrInf_V->iErrValue__ = pstArcErrInf_H->iErrValue;
+		pstArcErrInf_H->iErrValue__ = pstArcErrInf_V->iErrValue;
+
+		/* 单标记专用状态位处理。*/
+		pstArcErrInf_V->stArcSts.xLost = FALSE;
+		pstArcErrInf_V->stArcSts.xAlarm = FALSE;
+		pstArcErrInf_V->stArcSts.xNormal = FALSE;
+		pstArcErrInf_H->stArcSts.xLost = FALSE;
+		pstArcErrInf_H->stArcSts.xAlarm = FALSE;
+		pstArcErrInf_H->stArcSts.xNormal = FALSE;
+
+		/* 纵向状态位 */
+		if (pstArcErrInf_V->iErrValue == ARC_ERR_LOST)
+			pstArcErrInf_V->stArcSts.xLost = TRUE;
+		else
+		{
+			if (ABS(pstArcErrInf_V->iErrValue) > pstArcErrParam->fAlarm_V)
+				pstArcErrInf_V->stArcSts.xAlarm = TRUE;
+			else
+				pstArcErrInf_V->stArcSts.xNormal = TRUE;
+		}
+
+		/* 横向对单标记恒为丢失 */
+		pstArcErrInf_H->stArcSts.xLost = TRUE;
+
+		return;
+	}
+
+	//一些标志处理@计算纵向还是横向
+	//纵横向跟踪的是同一色|当前色肯定是同一个
+	xSameArcMark = KSCheckMarkInfIsSame(pstArcMarkInf_Follow_V, pstArcMarkInf_Follow_H);
+	if (xSameArcMark)//纵横向跟踪的是同一个色标
+	{
+		//计算色标误差值@都使用纵向的色标信息计算
+		if (pstArcErrInf_V->iArcErrCode == ARC_ERR_NONE)
+		{
+			KSCalcErrByDataInf(FALSE,//纵向误差取反
+				FALSE,//横向误差取反
+				pstArcErrParam,
+				pstArcMarkParam,
+				pstArcMarkInf_Cur_V,
+				pstArcMarkInf_Follow_V,
+				&iErr_V,//输出计算的纵向误差
+				&iErr_H);//输出计算的横向误差
+		}
+		else;//出错了|报警丢失
+
+		//纵向误差
+		pstArcErrInf_V->iErrValue = iErr_V;
+		pstArcErrInf_V->iErrValue__ = iErr_H;
+		//横向误差
+		pstArcErrInf_H->iErrValue = iErr_H;
+		pstArcErrInf_H->iErrValue__ = iErr_V;
+	}
+	else//纵横向跟踪的色标不一样
+	{
+		if (pstArcErrInf_V->iArcErrCode == ARC_ERR_NONE)
+		{
+			//计算色标误差值@使用纵向的色标信息计算
+			KSCalcErrByDataInf(FALSE,//纵向误差取反
+				FALSE,//横向误差取反
+				pstArcErrParam,
+				pstArcMarkParam,
+				pstArcMarkInf_Cur_V,
+				pstArcMarkInf_Follow_V,
+				&iErr_V,//输出计算的纵向误差
+				&iErr_H);//输出计算的横向误差
+		}
+		else;//出错了|报警丢失
+
+		//纵向误差
+		pstArcErrInf_V->iErrValue = iErr_V;
+		pstArcErrInf_V->iErrValue__ = iErr_H;
+
+
+		if (pstArcErrInf_H->iArcErrCode == ARC_ERR_NONE)
+		{
+			//计算色标误差值@使用横向的色标信息计算
+			KSCalcErrByDataInf(FALSE,//纵向误差取反
+				FALSE,//横向误差取反
+				pstArcErrParam,
+				pstArcMarkParam,
+				pstArcMarkInf_Cur_H,
+				pstArcMarkInf_Follow_H,
+				&iErr_V,//输出计算的纵向误差
+				&iErr_H);//输出计算的横向误差
+		}
+		else//出错了|报警丢失
+		{
+			iErr_V = ARC_ERR_LOST;
+			iErr_H = ARC_ERR_LOST;
+		}
+		//横向误差
+		pstArcErrInf_H->iErrValue = iErr_H;
+		pstArcErrInf_H->iErrValue__ = iErr_V;
+	}
+
+
+	/*******************************************误差后处理：三幅平均 + 修正量*******************************************************/
+	KSPostProcessArcErrValue(
+		&pstArcErrInf_V->iErrValue,
+		i_pstStAxisParam->lrAdjust_V * 100.0f,
+		(i_pstStAxisParam->iAverage_V > 1) ? TRUE : FALSE,
+		(uint8_t)i_pstStAxisParam->iAverage_V,
+		s_aiAverageBuff_V,
+		&s_byAverageIndex_V,
+		&s_xAverageInitDne_V,
+		&s_byLostCount_V);
+
+
+
+	KSPostProcessArcErrValue(
+		&pstArcErrInf_H->iErrValue,
+		i_pstStAxisParam->lrAdjust_H * 100.0f,
+		(i_pstStAxisParam->iAverage_H > 1) ? TRUE : FALSE,
+		(uint8_t)i_pstStAxisParam->iAverage_H,
+		s_aiAverageBuff_H,
+		&s_byAverageIndex_H,
+		&s_xAverageInitDne_H,
+		&s_byLostCount_H);
+
+	pstArcErrInf_V->iErrValue__ = pstArcErrInf_H->iErrValue;
+	pstArcErrInf_H->iErrValue__ = pstArcErrInf_V->iErrValue;
+
+
+	//标志初始化
+	pstArcErrInf_V->stArcSts.xLost = FALSE;
+	pstArcErrInf_V->stArcSts.xAlarm = FALSE;
+	pstArcErrInf_V->stArcSts.xNormal = FALSE;
+	pstArcErrInf_H->stArcSts.xLost = FALSE;
+	pstArcErrInf_H->stArcSts.xAlarm = FALSE;
+	pstArcErrInf_H->stArcSts.xNormal = FALSE;
+	//纵向标志位处理
+	if (pstArcErrInf_V->iErrValue == ARC_ERR_LOST)
+		pstArcErrInf_V->stArcSts.xLost = TRUE;
+	else
+	{
+		if (ABS(pstArcErrInf_V->iErrValue) > pstArcErrParam->fAlarm_V)
+			pstArcErrInf_V->stArcSts.xAlarm = TRUE;
+		else
+			pstArcErrInf_V->stArcSts.xNormal = TRUE;
+	}
+	//横向标志位处理
+	if (pstArcErrParam->xCalcArcErrEn_H)//横向使能打开了
+	{
+		if (pstArcErrInf_H->iErrValue == ARC_ERR_LOST)
+			pstArcErrInf_H->stArcSts.xLost = TRUE;
+		else
+		{
+			if (ABS(pstArcErrInf_H->iErrValue) > pstArcErrParam->fAlarm_H)
+				pstArcErrInf_H->stArcSts.xAlarm = TRUE;
+			else
+				pstArcErrInf_H->stArcSts.xNormal = TRUE;
+		}
+	}
+	return;
+}
+
+
+
+void KSCalcErrParamInter(//入参函数
+	WORD* i_puiFineData1,
+	WORD* i_puiFineData2,
+	StAxisParam* i_pstStAxisParam,
+	StGrpParam* i_pstStGrpParam,
+	REAL i_alrBase[2],
+	BYTE* i_pxOK_PosConfirmed,
+	BYTE i_xOK_FromMaster,
+	LP_ArcMarkParam const pstArcMarkParam,
+	LP_ArcErrParam  const pstArcErrParam)
+{
+	uint8_t xInclNegative10vSignal;
+	uint8_t xFollowColorV;
+	uint8_t xFollowColorH;
+	//uint16_t uDoor2Offset;
+	uint8_t uFollowIdV;
+	uint8_t uFollowIdH;
+	uint8_t xSmallSignal_T1;
+	uint8_t xSmallSignal_T2;
+
+	if (pstArcMarkParam == NULL || pstArcErrParam == NULL ||
+		i_puiFineData1 == NULL || i_puiFineData2 == NULL ||
+		i_pstStAxisParam == NULL || i_alrBase == NULL)
+	{
+		return;
+	}
+
+
+	xInclNegative10vSignal = GET_BIT16(i_pstStAxisParam->wSwitchRef, 9) ? TRUE : FALSE;//双极性判断
+	xFollowColorV = GET_BIT16(i_pstStAxisParam->wStatusRef, 12) ? TRUE : FALSE;//纵向跟踪开关
+	xFollowColorH = GET_BIT16(i_pstStAxisParam->wStatusRef, 9) ? TRUE : FALSE;//横向跟踪开关
+
+	//	if (i_pstStAxisParam->iGateSaEx > i_pstStAxisParam->iGateSa)
+	//		uDoor2Offset = (uint16_t)(i_pstStAxisParam->iGateSaEx - i_pstStAxisParam->iGateSa);
+	//	else
+	//		uDoor2Offset = 0u;
+
+	if (i_pstStAxisParam->byFollowColorId != 0u)//取跟踪色的ID
+	{
+		uFollowIdV = i_pstStAxisParam->byFollowColorId;
+		uFollowIdH = i_pstStAxisParam->byFollowColorId;
+	}
+	else
+	{
+		uFollowIdV = (i_pstStAxisParam->byColorIdCurrent > 1u) ?
+			(uint8_t)(i_pstStAxisParam->byColorIdCurrent - 1u) : 1u;
+		uFollowIdH = (i_pstStAxisParam->byColorIdCurrent > 1u) ?
+			(uint8_t)(i_pstStAxisParam->byColorIdCurrent - 1u) : 1u;
+	}
+
+	/************************ 先按当前 KSCalcErrParamInter 的顺序填 ArcErrParam ************************/
+	pstArcErrParam->uMarkType = (uint8_t)i_pstStAxisParam->iMarkTypeId;//色标类型@梯形、矩形等
+	pstArcErrParam->uMarkArrangeType = (uint8_t)i_pstStAxisParam->iMarkArrangeModal;//标记类型@顺序、逆序等
+	pstArcErrParam->uMarkInterval = MARK_INTERVAL;////色标间隔@默认20mm
+	pstArcErrParam->uArcDoorWidth = (uint8_t)i_pstStAxisParam->iGateWidthPhy;//套色波门宽度@mm
+
+	if (i_pstStAxisParam->lrInversedPrecision != 0)//跟随prosample的逻辑
+		pstArcErrParam->fPrecision_Act = i_pstStAxisParam->lrInversedPrecision;
+	else
+		pstArcErrParam->fPrecision_Act = 0.02f;
+
+	pstArcErrParam->pauFsDataSa1 = (uint16_t(*)[MAX_FINESAMPLE_NUM])i_puiFineData1;//T1精采样基地址
+	pstArcErrParam->pauFsDataSa2 = (uint16_t(*)[MAX_FINESAMPLE_NUM])i_puiFineData2;//T2精采样基地址
+	pstArcErrParam->fBase1 = i_alrBase[0] * 256.0f;//T1基线
+	pstArcErrParam->fBase2 = i_alrBase[1] * 256.0f;//T2基线
+	pstArcErrParam->fGirth = i_pstStAxisParam->lrGirth;//版周长
+	pstArcErrParam->fAlarm_V = i_pstStAxisParam->lrAlarm_V * 100.0f;//纵向报警阈值
+	pstArcErrParam->fAlarm_H = i_pstStAxisParam->lrAlarm_H * 100.0f;//横向报警阈值
+	pstArcErrParam->auDoorPos[0] = (uint16_t)i_pstStAxisParam->iGateSa;
+	pstArcErrParam->auDoorPos[1] = (uint16_t)i_pstStAxisParam->iGateSaEx;
+	pstArcErrParam->auDataNum[0] = i_pstStAxisParam->xFlag_Gate_double ? ((uint16_t)i_pstStAxisParam->iGateWidthFinePt_Act / 2) : (uint16_t)i_pstStAxisParam->iGateWidthFinePt_Act;//波门内点数
+	pstArcErrParam->auDataNum[1] = i_pstStAxisParam->xFlag_Gate_double ? (pstArcErrParam->auDataNum[0]) : 0u;//波门内点数;//单波门情况为0，双波门才赋值
+	pstArcErrParam->xCalcArcErrEn_H = GET_BIT16(i_pstStAxisParam->wSwitchRef, 0) ? TRUE : FALSE;//横向开关
+
+
+	pstArcErrParam->uArcId_V = i_pstStAxisParam->byColorIdCurrent;//当前色id
+	pstArcErrParam->uArcFollowId_V = uFollowIdV;//跟踪色id
+	pstArcErrParam->stArcErrCtlBit_V.use_follow_any_eye1 = FALSE;
+	pstArcErrParam->stArcErrCtlBit_V.use_follow_pre_eye2 = FALSE;
+	pstArcErrParam->stArcErrCtlBit_V.use_follow_any_eye2 = FALSE;//模式先赋初值
+
+	if (xFollowColorV)
+	{
+		pstArcErrParam->stArcErrCtlBit_V.use_follow_any_eye1 = TRUE;
+	}
+	else
+	{
+		pstArcErrParam->stArcErrCtlBit_V.use_follow_pre_eye2 = TRUE;
+	}
+
+
+	pstArcErrParam->uArcId_H = i_pstStAxisParam->byColorIdCurrent;
+	pstArcErrParam->uArcFollowId_H = uFollowIdH;
+	pstArcErrParam->stArcErrCtlBit_H.use_follow_any_eye1 = FALSE;
+	pstArcErrParam->stArcErrCtlBit_H.use_follow_pre_eye2 = FALSE;
+	pstArcErrParam->stArcErrCtlBit_H.use_follow_any_eye2 = FALSE;
+
+	if (xFollowColorH)
+	{
+		pstArcErrParam->stArcErrCtlBit_H.use_follow_any_eye1 = TRUE;
+	}
+	else
+	{
+		pstArcErrParam->stArcErrCtlBit_H.use_follow_pre_eye2 = TRUE;
+	}
+
+
+	/************************ 最后再按当前 KSCalcErrParamInter 的顺序填 ArcMarkParam ************************/
+	pstArcMarkParam->xInclNegative10vSignal = xInclNegative10vSignal ? MARK_IS_INCLNEGATIVE_10VSIGNAL : MARK_IS_10VSIGNAL;//单双极性赋值
+	pstArcMarkParam->uMarkType = pstArcErrParam->uMarkType;////色标类型@梯形、矩形等@和整机的保持一致
+
+	pstArcMarkParam->uPolarityIsNeg_T1_Door1 = GET_BIT32(i_pstStAxisParam->dwControlBits, 5) ? SIGNAL_IS_NORMAL : SIGNAL_IS_NEGATIVE;
+	pstArcMarkParam->uPolarityIsNeg_T2_Door1 = GET_BIT32(i_pstStAxisParam->dwControlBits, 6) ? SIGNAL_IS_NORMAL : SIGNAL_IS_NEGATIVE;
+	pstArcMarkParam->uPolarityIsNeg_T1_Door2 = GET_BIT32(i_pstStAxisParam->dwControlBits, 15) ? SIGNAL_IS_NORMAL : SIGNAL_IS_NEGATIVE;
+	pstArcMarkParam->uPolarityIsNeg_T2_Door2 = GET_BIT32(i_pstStAxisParam->dwControlBits, 16) ? SIGNAL_IS_NORMAL : SIGNAL_IS_NEGATIVE;
+	//pstArcMarkParam->uPolarityIsNegative = pstArcMarkParam->uPolarityIsNeg_T1_Door1;
+
+	pstArcMarkParam->xUseInnerBase = GET_BIT16(i_pstStAxisParam->wSwitchRef, 1) ? TRUE : FALSE;//门内基线标志位
+	pstArcMarkParam->xCalcBaselineTwice = TRUE;//基线标志位二次校准
+	pstArcMarkParam->fMinimumSignalval = 0.2f;//信号最小值
+	pstArcMarkParam->fSmallSignalval = 0.5f;//小信号的值
+	pstArcMarkParam->markHLen = i_pstStGrpParam->byTriMark_SideB;//梯形标记直边
+	pstArcMarkParam->markVLen = i_pstStGrpParam->byTriMark_SideC;//梯形标记直边
+
+	/* 单标记确认按钮请求：由外部逻辑下发（上升沿触发，避免持续1导致每帧重置基准） */
+	{
+		static uint8_t s_xOMK_ReqPrev = FALSE;
+		uint8_t xReqRaw = FALSE;
+
+		if (i_xOK_FromMaster || (i_pxOK_PosConfirmed != NULL && *i_pxOK_PosConfirmed))
+		{
+			xReqRaw = TRUE;
+		}
+
+		pstArcErrParam->xOMK_ReqCommit = (xReqRaw && !s_xOMK_ReqPrev) ? TRUE : FALSE;
+		s_xOMK_ReqPrev = xReqRaw;
+	}
+
+
+	if (xInclNegative10vSignal)//双极性情况
+	{
+		pstArcMarkParam->fMinimumSignalval_Sample = KSMarkVoltageToValue(SIGNAL_VALUE_MIN, MARK_IS_INCLNEGATIVE_10VSIGNAL);//最小信号值@采样值|按照单极性
+	}
+	else//单极性情况，月光宝盒只有单极性
+	{
+		pstArcMarkParam->fMinimumSignalval_Sample = KSMarkVoltageToValue(SIGNAL_VALUE_MIN, MARK_IS_10VSIGNAL);//最小信号值@采样值|按照单极性
+	}
+
+	xSmallSignal_T1 = GET_BIT32(i_pstStAxisParam->dwControlBits, 11) ? TRUE : FALSE;
+	xSmallSignal_T2 = GET_BIT32(i_pstStAxisParam->dwControlBits, 12) ? TRUE : FALSE;
+
+	pstArcErrParam->xSmallSignal_T1 = xSmallSignal_T1;
+	pstArcErrParam->xSmallSignal_T2 = xSmallSignal_T2;
+
+
+	pstArcMarkParam->uScopeLevelNum = 3;
+	pstArcMarkParam->afScopeLevelRatio[0] = 0.50f;
+	pstArcMarkParam->afScopeLevelRatio[1] = 0.25f;
+	pstArcMarkParam->afScopeLevelRatio[2] = 0.75f;
+	pstArcMarkParam->uFilterpoints = 3;
+
+
+
+}
+
+void KS_FB_PickOutFakePointV2_V(StPickOutFakePoint stStPickOutFakePointIn, BYTE* o_pxFakeIsConfirmed)
+{
+	INT iN;
+	INT iUsedVariationMaxThreshold;
+	static INT aiBufferedError[3];		// (*buffered error list*)
+	static INT aiVariation[2];  //(*variation*)
+	INT iVariationVariation; //(*variation's variation*)
+	if (stStPickOutFakePointIn.i_xIsValidError == 0)
+	{
+		if (o_pxFakeIsConfirmed != 0)
+		{
+			*o_pxFakeIsConfirmed = 1;
+		}
+		aiBufferedError[0] = 0;
+		aiBufferedError[1] = 0;
+		aiBufferedError[2] = 0;
+	}
+	//(*valid error process*)
+	else
+		//(*误差变化量的变化量不超出10|2016.10.14.120106_*)
+	{
+		if (ABS(stStPickOutFakePointIn.i_iError_0_01mm) <= stStPickOutFakePointIn.i_iBoundaryError_0_01mm)
+			//(*0.5mm内的误差变化量的变化量不超过5不认为是飞点*)
+		{
+			iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationBaseValue;
+		}
+		else
+		{
+			iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationBaseValue +
+				(ABS(stStPickOutFakePointIn.i_iError_0_01mm) - stStPickOutFakePointIn.i_iBoundaryError_0_01mm) / stStPickOutFakePointIn.i_iErrorLevel_0_01mm;
+			//(*超过0.5mm的误差,每0.25mm一个档位递增变化量的变化量*)
+			if (iUsedVariationMaxThreshold > stStPickOutFakePointIn.i_iVariationVariationMax)//(*upper limit*)
+			{
+				iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationVariationMax;
+			}
+			else if (iUsedVariationMaxThreshold < stStPickOutFakePointIn.i_iVariationVariationMin)//2024.8.24
+			{
+				iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationVariationMin;//(*lower limit*)
+			}
+		}
+	}
+
+	//	(*存放规则:都是用下标1来记录当前误差|2017.3.31.145925_*)
+	//	(*rolling the buffered error list*)
+	for (iN = 2; iN > 0; iN--)
+	{
+		aiBufferedError[iN] = aiBufferedError[iN - 1];
+	}
+	aiBufferedError[0] = stStPickOutFakePointIn.i_iError_0_01mm; //(*record the current error to buffered error list*)
+	//(*calculate error variation*)
+	for (iN = 2; iN > 0; iN--)
+	{
+		aiVariation[iN - 1] = aiBufferedError[iN - 1] - aiBufferedError[iN]; //(*new - old*)
+	}
+	//(*calculate error variation variation*)
+	iVariationVariation = aiVariation[0] - aiVariation[1];
+	if (o_pxFakeIsConfirmed != 0)
+	{
+		if (ABS(iVariationVariation) > ABS(iUsedVariationMaxThreshold))
+		{
+			*o_pxFakeIsConfirmed = 1;
+		}
+		else
+		{
+			*o_pxFakeIsConfirmed = 0;
+		}
+	}
+}
+
+//增加横向飞点判断2023.5.24.103307
+void KS_FB_PickOutFakePointV2_H(StPickOutFakePoint stStPickOutFakePointIn, BYTE* o_pxFakeIsConfirmed)
+{
+	INT iN;
+	INT iUsedVariationMaxThreshold;
+	static INT aiBufferedError[3];		// (*buffered error list*)
+	static INT aiVariation[2];  //(*variation*)
+	INT iVariationVariation; //(*variation's variation*)
+	if (stStPickOutFakePointIn.i_xIsValidError == 0)
+	{
+		if (o_pxFakeIsConfirmed != 0)
+		{
+			*o_pxFakeIsConfirmed = 1;
+		}
+		aiBufferedError[0] = 0;
+		aiBufferedError[1] = 0;
+		aiBufferedError[2] = 0;
+	}
+	//(*valid error process*)
+	else
+		//(*误差变化量的变化量不超出10|2016.10.14.120106_*)
+	{
+		if (ABS(stStPickOutFakePointIn.i_iError_0_01mm) <= stStPickOutFakePointIn.i_iBoundaryError_0_01mm)
+			//(*0.5mm内的误差变化量的变化量不超过5不认为是飞点*)
+		{
+			iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationBaseValue;
+		}
+		else
+		{
+			iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationBaseValue +
+				(ABS(stStPickOutFakePointIn.i_iError_0_01mm) - stStPickOutFakePointIn.i_iBoundaryError_0_01mm) / stStPickOutFakePointIn.i_iErrorLevel_0_01mm;
+			//(*超过0.5mm的误差,每0.25mm一个档位递增变化量的变化量*)
+			if (iUsedVariationMaxThreshold > stStPickOutFakePointIn.i_iVariationVariationMax)//(*upper limit*)
+			{
+				iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationVariationMax;
+			}
+			else if (iUsedVariationMaxThreshold < stStPickOutFakePointIn.i_iVariationVariationMin)
+			{
+				iUsedVariationMaxThreshold = stStPickOutFakePointIn.i_iVariationVariationMin;//(*lower limit*)
+			}
+		}
+	}
+
+	//	(*存放规则:都是用下标1来记录当前误差|2017.3.31.145925_*)
+	//	(*rolling the buffered error list*)
+	for (iN = 2; iN > 0; iN--)
+	{
+		aiBufferedError[iN] = aiBufferedError[iN - 1];
+	}
+	aiBufferedError[0] = stStPickOutFakePointIn.i_iError_0_01mm; //(*record the current error to buffered error list*)
+	//(*calculate error variation*)
+	for (iN = 2; iN > 0; iN--)
+	{
+		aiVariation[iN - 1] = aiBufferedError[iN - 1] - aiBufferedError[iN]; //(*new - old*)
+	}
+	//(*calculate error variation variation*)
+	iVariationVariation = aiVariation[0] - aiVariation[1];
+	if (o_pxFakeIsConfirmed != 0)
+	{
+		if (ABS(iVariationVariation) > ABS(iUsedVariationMaxThreshold))
+		{
+			*o_pxFakeIsConfirmed = 1;
+		}
+		else
+		{
+			*o_pxFakeIsConfirmed = 0;
+		}
+	}
+}
+

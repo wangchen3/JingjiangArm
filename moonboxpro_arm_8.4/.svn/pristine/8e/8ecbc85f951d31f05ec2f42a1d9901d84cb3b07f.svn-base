@@ -1,0 +1,5 @@
+../Kesai_Process/ks_somefunc.c:5:6:KS_GetPulse_Act	32	static
+../Kesai_Process/ks_somefunc.c:20:6:KS_ReDealCtlCommand	56	static
+../Kesai_Process/ks_somefunc.c:205:5:KS_PulseOutCtl	72	static
+../Kesai_Process/ks_somefunc.c:508:6:KS_IoCtlInfWr	40	static
+../Kesai_Process/ks_somefunc.c:536:6:KS_IoCtlInfRd	40	static

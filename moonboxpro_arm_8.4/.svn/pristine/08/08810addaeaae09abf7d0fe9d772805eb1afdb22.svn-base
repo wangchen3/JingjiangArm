@@ -1,0 +1,8 @@
+../UPdate/bin_upgrade.c:18:6:Set_Iap_Flag	32	static
+../UPdate/bin_upgrade.c:275:10:Generate_Check_Sum	8	static
+../UPdate/bin_upgrade.c:60:9:Upgrade_Get_Version_Handle	24	static
+../UPdate/bin_upgrade.c:96:9:Upgrade_Start_Handle	32	static
+../UPdate/bin_upgrade.c:136:9:Upgrade_Process_Handle	40	static
+../UPdate/bin_upgrade.c:230:9:Upgrade_Stop_Handle	32	static
+../UPdate/bin_upgrade.c:36:9:Upgrade_Handle	0	static
+../UPdate/bin_upgrade.c:288:6:Sys_Soft_Reset	0	static,ignoring_inline_asm

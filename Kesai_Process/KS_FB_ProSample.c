@@ -353,9 +353,14 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 				 *实际不生效——本工程补接)|Yang.zj+ 2026.11.09.160000*/
 				{
 					static REAL lrVelocity_FlyPre = 0.0f;//上一拍整机速度
-					KS_FlyRemove_NoteDv_V(i_pstStGrpParam->lrVelocity - lrVelocity_FlyPre);
-					KS_FlyRemove_NoteDv_H(i_pstStGrpParam->lrVelocity - lrVelocity_FlyPre);
+					static BYTE xVelFlyPreValid = 0;//首拍守卫:无上一拍不入窗,防Δv=v-0大值灌窗|自8.4回灌 2026.11.13
+					if (xVelFlyPreValid)
+					{
+						KS_FlyRemove_NoteDv_V(i_pstStGrpParam->lrVelocity - lrVelocity_FlyPre);
+						KS_FlyRemove_NoteDv_H(i_pstStGrpParam->lrVelocity - lrVelocity_FlyPre);
+					}
 					lrVelocity_FlyPre = i_pstStGrpParam->lrVelocity;
+					xVelFlyPreValid = 1;
 				}
 #endif
 

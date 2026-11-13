@@ -1,0 +1,6 @@
+../RingNetDll/StPCComRam.c:13:7:PCComRamCreate	1
+../RingNetDll/StPCComRam.c:19:7:PCComRamDelete	1
+../RingNetDll/StPCComRam.c:25:7:PCComRamRst	1
+../RingNetDll/StPCComRam.c:30:7:PCComRamMalloc	2
+../RingNetDll/StPCComRam.c:42:7:PCComRamRd	3
+../RingNetDll/StPCComRam.c:59:7:PCComRamWr	2

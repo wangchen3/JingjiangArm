@@ -1,0 +1,30 @@
+################################################################################
+# Automatically-generated file. Do not edit!
+# Toolchain: GNU Tools for STM32 (13.3.rel1)
+################################################################################
+
+# Add inputs and outputs from these tool invocations to the build variables 
+C_SRCS += \
+../UPdate/bin_upgrade.c \
+../UPdate/flash.c 
+
+OBJS += \
+./UPdate/bin_upgrade.o \
+./UPdate/flash.o 
+
+C_DEPS += \
+./UPdate/bin_upgrade.d \
+./UPdate/flash.d 
+
+
+# Each subdirectory must supply rules for building sources it contributes
+UPdate/%.o UPdate/%.su UPdate/%.cyclo: ../UPdate/%.c UPdate/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m4 -std=gnu11 -DUSE_HAL_DRIVER -DSTM32F412Zx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Kesai_Comm" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/RingNetDll" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/SYSTEM" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Core" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Kesai_Process" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Kesai_Visu" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/UPdate" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers/CMSIS" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers/CMSIS/Include" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers" -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Drivers/CMSIS/Device/ST/STM32F4xx/Include" -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@MoonBoxTest/ARM/moonboxpro/Modbus485_Master" -Os -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+clean: clean-UPdate
+
+clean-UPdate:
+	-$(RM) ./UPdate/bin_upgrade.cyclo ./UPdate/bin_upgrade.d ./UPdate/bin_upgrade.o ./UPdate/bin_upgrade.su ./UPdate/flash.cyclo ./UPdate/flash.d ./UPdate/flash.o ./UPdate/flash.su
+
+.PHONY: clean-UPdate
+

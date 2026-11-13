@@ -1,0 +1,9 @@
+../RingNetDll/StFileOp.c:15:6:CLPBYTEListCreate	0	static
+../RingNetDll/StFileOp.c:22:7:CGetList	16	static
+../RingNetDll/StFileOp.c:60:7:CClearPData	0	static
+../RingNetDll/StFileOp.c:67:7:CAddParam	16	static
+../RingNetDll/StFileOp.c:79:7:CSetStFunction	0	static
+../RingNetDll/StFileOp.c:85:6:CLPBYTEListDelete	0	static
+../RingNetDll/StFileOp.c:126:7:Fn_Real_GetDllVersion	136	static
+../RingNetDll/StFileOp.c:159:7:Fn_Read_GeneralKesaiCmd	384	static
+../RingNetDll/StFileOp.c:93:7:StFnProcess	16	static

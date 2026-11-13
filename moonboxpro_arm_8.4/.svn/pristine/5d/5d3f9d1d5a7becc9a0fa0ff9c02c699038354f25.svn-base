@@ -1,0 +1,13 @@
+../RingNetDll/StSample.c:17:7:SampleCreate	1
+../RingNetDll/StSample.c:76:7:SampleDelete	1
+../RingNetDll/StSample.c:80:7:SampleRst	1
+../RingNetDll/StSample.c:111:7:SampleSetSampleParam	10
+../RingNetDll/StSample.c:216:7:SampleSetDataBaseAddr	1
+../RingNetDll/StSample.c:224:7:SampleGetRoundData	27
+../RingNetDll/StSample.c:466:7:SampleGetRoundData_V0	17
+../RingNetDll/StSample.c:604:7:SampleGetFineSampleNum	1
+../RingNetDll/StSample.c:616:7:SampleClearFineStatus	1
+../RingNetDll/StSample.c:629:7:SampleGetFineDataFromBuffer	9
+../RingNetDll/StSample.c:694:7:SampleGetFineData	13
+../RingNetDll/StSample.c:756:7:SampleGetStatus	1
+../RingNetDll/StSample.c:762:7:SampleRdRoundDataThread	4

@@ -1,0 +1,4 @@
+../Kesai_Process/calcbase.c:146:7:KS_CalcBaselineByData_RS	72	static
+../Kesai_Process/calcbase.c:407:7:KS_CalcBaselineByData_FS	96	static
+../Kesai_Process/calcbase.c:697:7:KS_RatioL_ByThresholdCutting	32	static
+../Kesai_Process/calcbase.c:715:7:KS_Average	40	static

@@ -1,0 +1,4 @@
+../Kesai_Process/calcerr.c:19:7:KS_CalcError_ARC	128	static
+../Kesai_Process/calcerr.c:1228:7:KS_CalcError_ARC_Version	16	static
+../Kesai_Process/calcerr.c:1234:6:KS_FB_PickOutFakePoint_V	32	static
+../Kesai_Process/calcerr.c:1304:6:KS_FB_PickOutFakePoint_H	32	static

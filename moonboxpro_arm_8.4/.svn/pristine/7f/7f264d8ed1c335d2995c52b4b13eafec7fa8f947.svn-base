@@ -1,0 +1,5 @@
+../Core/Src/misc.c:11:6:NVIC_PriorityGroupConfig	0	static
+../Core/Src/misc.c:21:6:NVIC_Init	16	static
+../Core/Src/misc.c:56:6:NVIC_SetVectorTable	0	static
+../Core/Src/misc.c:65:6:NVIC_SystemLPConfig	0	static
+../Core/Src/misc.c:81:6:SysTick_CLKSourceConfig	0	static

@@ -1,0 +1,6 @@
+../RingNetDll/StPCComRam.c:13:7:PCComRamCreate	16	static
+../RingNetDll/StPCComRam.c:19:7:PCComRamDelete	16	static
+../RingNetDll/StPCComRam.c:25:7:PCComRamRst	16	static
+../RingNetDll/StPCComRam.c:30:7:PCComRamMalloc	24	static
+../RingNetDll/StPCComRam.c:42:7:PCComRamRd	32	static,ignoring_inline_asm
+../RingNetDll/StPCComRam.c:59:7:PCComRamWr	24	static,ignoring_inline_asm

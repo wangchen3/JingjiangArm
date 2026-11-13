@@ -1,0 +1,4 @@
+../Core/Src/delay.c:96:6:Delay_Init	8	static
+../Core/Src/delay.c:161:6:delay_us	0	static
+../Core/Src/delay.c:180:6:delay_xms	0	static
+../Core/Src/delay.c:195:6:delay_ms	8	static

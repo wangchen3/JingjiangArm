@@ -1,0 +1,26 @@
+Kesai_KSCR/KS_FB_DacOutCtl.o: ../Kesai_KSCR/KS_FB_DacOutCtl.c \
+ ../Kesai_KSCR/KS_FB_DacOutCtl.h ../Core/Inc/base.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/SYSTEM/sys.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/KesaiAPI.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_driver.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_motion.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Modbus485_Master/modbus485.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/StSample.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/type_def.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_private.h \
+ C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_exta.h \
+ ../Kesai_KSCR/KS_FB_RoundSample.h
+../Kesai_KSCR/KS_FB_DacOutCtl.h:
+../Core/Inc/base.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/SYSTEM/sys.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/KesaiAPI.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_driver.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_motion.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Modbus485_Master/modbus485.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/StSample.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/type_def.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_private.h:
+C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll/gt_rn_struct_exta.h:
+../Kesai_KSCR/KS_FB_RoundSample.h:

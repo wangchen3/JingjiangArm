@@ -1,0 +1,5 @@
+../Kesai_Process/ks_somefunc.c:5:6:KS_GetPulse_Act	2
+../Kesai_Process/ks_somefunc.c:20:6:KS_ReDealCtlCommand	34
+../Kesai_Process/ks_somefunc.c:205:5:KS_PulseOutCtl	45
+../Kesai_Process/ks_somefunc.c:508:6:KS_IoCtlInfWr	2
+../Kesai_Process/ks_somefunc.c:536:6:KS_IoCtlInfRd	2

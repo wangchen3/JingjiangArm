@@ -1,0 +1,3 @@
+../UPdate/flash.c:19:10:GetSector	0	static
+../UPdate/flash.c:120:10:Flash_Read_Word	0	static
+../UPdate/flash.c:204:10:Flash_Read_Buf	8	static

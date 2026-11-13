@@ -1,0 +1,7 @@
+../Kesai_KSCR/KS_FB_RoundSample.c:19:6:KsRGBChannelCtl	24	static
+../Kesai_KSCR/KS_FB_RoundSample.c:51:6:KsRsDataDealEx	4080	static
+../Kesai_KSCR/KS_FB_RoundSample.c:225:6:KsGetDataAdrByCurChannel	24	static
+../Kesai_KSCR/KS_FB_RoundSample.c:304:6:KsGetSampleInf_V2	256	static
+../Kesai_KSCR/KS_FB_RoundSample.c:559:6:KsGetSampleInf	240	static
+../Kesai_KSCR/KS_FB_RoundSample.c:706:9:KSGetGateWidth_Hmi	24	static
+../Kesai_KSCR/KS_FB_RoundSample.c:725:6:KSRoundDataDisplayDeal	40	static

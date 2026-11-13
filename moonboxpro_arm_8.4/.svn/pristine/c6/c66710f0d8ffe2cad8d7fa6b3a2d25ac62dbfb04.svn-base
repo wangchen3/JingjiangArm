@@ -1,0 +1,8 @@
+../Kesai_Comm/comm.c:55:6:KS_DigitalTubesCtl	16
+../Kesai_Comm/comm.c:89:7:Get_SampleParamUpda	2
+../Kesai_Comm/comm.c:103:6:KS_InitSample	1
+../Kesai_Comm/comm.c:110:7:KS_CRC	3
+../Kesai_Comm/comm.c:173:6:KS_CfgAxisSampleParam	20
+../Kesai_Comm/comm.c:374:6:KS_CfgAxisSampleParam_New	11
+../Kesai_Comm/comm.c:493:7:KS_FB_SyncWithServer	157
+../Kesai_Comm/comm.c:1970:7:KS_FB_SyncWithServer_Deputy	117

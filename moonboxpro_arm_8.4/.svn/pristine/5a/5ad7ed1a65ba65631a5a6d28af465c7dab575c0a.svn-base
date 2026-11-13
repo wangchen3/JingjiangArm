@@ -1,0 +1,4 @@
+../SYSTEM/sys.c:11:6:WFI_SET	0	static,ignoring_inline_asm
+../SYSTEM/sys.c:16:6:INTX_DISABLE	0	static,ignoring_inline_asm
+../SYSTEM/sys.c:22:6:INTX_ENABLE	0	static,ignoring_inline_asm
+../SYSTEM/sys.c:29:6:MSR_MSP	0	static,ignoring_inline_asm

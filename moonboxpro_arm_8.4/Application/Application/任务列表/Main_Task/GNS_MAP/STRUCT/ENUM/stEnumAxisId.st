@@ -1,0 +1,48 @@
+﻿(*@CES
+Name=stEnumAxisId
+Type=Gvl
+TypeGuid=2db5746d-d284-4425-9f7f-2663a34b0ebc
+Guid=4f97fc19-ca37-4da0-90af-5aea95a45e3f
+HasDeclaration=True
+HasImplementation=False
+*)
+{DECLARATION}
+//{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE stEnumAxisId :(
+	AXISID_INVALID:=-1,
+	AXISID_RESERVED,
+	(*不能随意调整@start*)
+	AXISID_1U:=1,
+	AXISID_2U,
+	AXISID_3U,
+	AXISID_4U,
+	AXISID_5U,
+	AXISID_6U,
+	AXISID_7U,
+	AXISID_8U,
+	AXISID_9U,
+	AXISID_10U,
+	AXISID_11U,
+	AXISID_12U,
+	AXISID_13U,
+	AXISID_14U,
+	AXISID_15U,
+	(*不能随意调整@end*)
+	AXISID_UWA,(*放料A*)
+	AXISID_UWB,
+	AXISID_RWA,
+	AXISID_RWB,
+	AXISID_IF,(*放牵*)
+	AXISID_OF,
+	AXISID_UWA_II,
+	AXISID_UWB_II,
+	AXISID_RWA_II,
+	AXISID_RWB_II,
+	AXISID_IF_II,
+	AXISID_OF_II,
+	AXISID_CENTER(*中心辊*)
+);
+END_TYPE
+
+{IMPLEMENTATION}

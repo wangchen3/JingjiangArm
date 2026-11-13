@@ -1,0 +1,5 @@
+../Kesai_KSCR/KS_FB_DacOutCtl.c:17:6:KS_FB_DacOutCtl	64	static
+../Kesai_KSCR/KS_FB_DacOutCtl.c:107:6:KS_OffsetAutoCtl	64	static
+../Kesai_KSCR/KS_FB_DacOutCtl.c:172:6:KS_OffsetAutoCtl_T1T2	80	static
+../Kesai_KSCR/KS_FB_DacOutCtl.c:335:6:KS_SourceLightAutoCtl	80	static
+../Kesai_KSCR/KS_FB_DacOutCtl.c:566:6:KS_AutoFocusCtl_MoonPro	128	static

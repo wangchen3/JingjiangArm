@@ -1,0 +1,695 @@
+/*
+ * KS_FB_DacOutCtl.c
+ *
+ *  Created on: Jul 22, 2025
+ *      Author: 17500
+ */
+//2025.7.22.113946|wei.n|移植
+#include "KS_FB_DacOutCtl.h"
+#include "KesaiAPI.h"
+#include "base.h"
+#include "stdlib.h"
+#include "modbus485.h"
+#include "StSample.h"
+#include "KS_FB_RoundSample.h"
+#include "string.h"//内存操作
+
+void KS_FB_DacOutCtl(float i_rOffSet_T1,			   //T1偏移
+					float i_rSource_Light_T1,   		//T1光源
+					float i_rBias_T1,					//T1偏置
+					float i_rBrightness_Light_T1,		//T1亮度
+					float i_rOffSet_T2,				   	//T2偏移
+					float i_rSource_Light_T2,  			 //T2光源
+					float i_rBias_T2,					//T2偏置
+					float i_rBrightness_Light_T2)		 //T2偏置
+{
+
+	float fCoeff = 65535 / 5.0;//5V电压对应65535|输入的参数未电压值
+	static float rOffSet_T1_Pre=0;
+	static float rSource_Light_T1_Pre=0;
+	static float rBias_T1_Pre=0;
+	static float rBrightness_Light_T1_Pre=0;
+	static float rOffSet_T2_Pre=0;
+	static float rSource_Light_T2_Pre=0;
+	static float rBias_T2_Pre=0;
+	static float rBrightness_Light_T2_Pre=0;
+	uint16_t wOffSet_T1=0;
+	uint16_t wSource_Light_T1=0;
+	uint16_t wBias_T1=0;
+	uint16_t wBrightness_Light_T1=0;
+	uint16_t wOffSet_T2=0;
+	uint16_t wSource_Light_T2=0;
+	uint16_t wBias_T2=0;
+	uint16_t wBrightness_Light_T2=0;
+	int16_t iRtn = 0;
+	//修改了才写值
+	if(i_rOffSet_T1!=rOffSet_T1_Pre) //T1偏移
+	{
+		wOffSet_T1=i_rOffSet_T1*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_OFFSET_T1, &wOffSet_T1);
+	}
+
+	if(i_rSource_Light_T1!=rSource_Light_T1_Pre) //T1光源
+	{
+		wSource_Light_T1=i_rSource_Light_T1*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_SOURCE_LIGHT_T1, &wSource_Light_T1);
+	}
+
+	if(i_rBias_T1!=rBias_T1_Pre) //T1偏置
+	{
+		wBias_T1=i_rBias_T1*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_BIAS_T1, &wBias_T1);
+	}
+
+	if(i_rBrightness_Light_T1!=rBrightness_Light_T1_Pre) //T1亮度
+	{
+		wBrightness_Light_T1=i_rBrightness_Light_T1*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_BRIGHTNESS_LIGHT_T1, &wBrightness_Light_T1);
+	}
+
+	if(i_rOffSet_T2!=rOffSet_T2_Pre) //T2偏移
+	{
+		wOffSet_T2=i_rOffSet_T2*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_OFFSET_T2, &wOffSet_T2);
+	}
+
+	if(i_rSource_Light_T2!=rSource_Light_T2_Pre) //T2光源
+	{
+		wSource_Light_T2=i_rSource_Light_T2*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_SOURCE_LIGHT_T2, &wSource_Light_T2);
+	}
+
+	if(i_rBias_T2!=rBias_T2_Pre) //T1偏置
+	{
+		wBias_T2=i_rBias_T2*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_BIAS_T2, &wBias_T2);
+	}
+
+	if(i_rBrightness_Light_T2!=rBrightness_Light_T2_Pre) //T1亮度
+	{
+		wBrightness_Light_T2=i_rBrightness_Light_T2*fCoeff;
+		iRtn = GT_RN_WriteFPGA(ADR_BRIGHTNESS_LIGHT_T2, &wBrightness_Light_T2);
+	}
+
+	rOffSet_T1_Pre=i_rOffSet_T1;
+	rSource_Light_T1_Pre=i_rSource_Light_T1;
+	rBias_T1_Pre=i_rBias_T1;
+	rBrightness_Light_T1_Pre=i_rBrightness_Light_T1;
+	rOffSet_T2_Pre=i_rOffSet_T2;
+	rSource_Light_T2_Pre=i_rSource_Light_T2;
+	rBias_T2_Pre=i_rBias_T2;
+	rBrightness_Light_T2_Pre=i_rBrightness_Light_T2;
+	//无意义 只是为了消除警告
+	iRtn++;
+}
+
+//2025.11.16.110525//xi.hy//自动聚焦_偏移自调整处理
+void KS_OffsetAutoCtl(float i_rBase, //基线
+						float* i_prOffset,//偏移
+						float i_rBaseTar,//目标基线
+						float i_rKp,
+						float i_rKd,
+						int16_t i_iTimeAdjust_ms,//调整周期
+						int16_t* i_piError_Pre,//上一次的偏差
+						uint8_t i_byMaxRsData,//粗采样最大值
+						uint8_t i_xLimitOut,//是否需要处理输出值
+						float i_fScale_Down//输出值缩小比例
+						)
+{
+	int16_t iError_Cur;//当前偏差
+	float rError_Rate;//偏差变化率
+	float rOffset;//偏移值
+	float rValue_Output_Temp;//输出值临时
+	float rValue_Delta;//本次调整值
+	int16_t iError_Pre_Temp=*i_piError_Pre;//获取上一次偏差
+
+	iError_Cur=i_rBaseTar-i_rBase;//当前偏差
+	//边界处理
+	if(i_rBase>=255)//基线已最大，不能再增加偏移
+	{
+		if(iError_Cur>=0)
+			iError_Cur=0;
+	}
+	else if(i_rBase<=0)//基线已最小，不能再减小偏移
+	{
+		if(iError_Cur<=0)
+			iError_Cur=0;
+	}
+	rError_Rate=(iError_Cur-iError_Pre_Temp)/i_iTimeAdjust_ms*1000;//偏差变化率
+	rValue_Delta=i_rKp*iError_Cur+i_rKd*rError_Rate;//本次调整值
+
+	if(i_xLimitOut)//需要处理输出值
+	{
+
+		rValue_Delta=rValue_Delta/i_fScale_Down;
+
+		//去除基线死区
+//		if(i_rBase>1 && i_rBase<254 && i_byMaxRsData>=5)//认为波形已经出来，将输出值尽量小
+//		{
+//			rValue_Delta=rValue_Delta/5.0;
+//		}
+//		else
+//		{
+//			;
+//		}
+	}
+
+	rOffset=*i_prOffset;//获取偏移值
+	rValue_Output_Temp=rOffset+rValue_Delta;//计算输出值
+	//输出值限幅
+	if(rValue_Output_Temp>5)
+		rValue_Output_Temp=5;
+	else if(rValue_Output_Temp<0)
+		rValue_Output_Temp=0;
+
+	//偏移值输出出去
+	*i_prOffset=rValue_Output_Temp;
+	//前一次偏差输出出去
+	*i_piError_Pre=iError_Cur;
+}
+
+//2025.11.28.094727//自动聚焦_偏移自调整封装
+void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
+							uint8_t i_xLocalAxisRollerDn,//压辊状态
+							uint16_t* i_puiSwitchAndState_OffsetCtl,//偏移自调的开关及状态
+							uint8_t i_xFlag_Print,//印刷状态
+							float i_rVel_Axis,//轴速度
+							float i_fGirth,//版周长
+							uint16_t* i_puiCtlTime_OffsetAutoCtl,//偏移自调控制时间计数
+							uint8_t i_uiBase_Tar_OffsetCtl,//目标基线
+							float i_fBaseLine_T1,//T1基线
+							float i_fBaseLine_T2,//T2基线
+							float* i_pfOffset_T1,//T1偏移
+							float* i_pfOffset_T2,//T2偏移
+							float i_fKp_T1,
+							float i_fKd_T1,
+							float i_fKp_T2,
+							float i_fKd_T2,
+							uint8_t i_byMinRsData_T1,//T1粗采样最小值
+							uint8_t i_byMinRsData_T2,//T2粗采样最小值
+							uint8_t i_byMaxRsData_T1,//T1粗采样最大值
+							uint8_t i_byMaxRsData_T2,//T2粗采样最大值
+							uint16_t* i_puiTime_xBaseDone_OffsetAutoCtl,//基线稳定多久计数
+							uint32_t* i_pdwRemainTime_OffsetCtl//本次调整持续时间计数
+							)
+{
+	//局部变量处理
+	static uint8_t xLocalAxisRollerDn_Pre;
+	uint16_t uiCtlTime_OffsetAutoCtl=*i_puiCtlTime_OffsetAutoCtl;
+	uint16_t uiTime_xBaseDone_OffsetAutoCtl=*i_puiTime_xBaseDone_OffsetAutoCtl;
+	uint32_t dwRemainTime_OffsetCtl=*i_pdwRemainTime_OffsetCtl;
+	uint8_t xManu_OffsetCtl;
+	int16_t iTimeCycle_OffsetCtl=2000;
+	static int16_t iError_Pre_T1;
+	static int16_t iError_Pre_T2;
+	static uint8_t uiBaseLine_Pre_T1;
+	static uint8_t uiBaseLine_Pre_T2;
+	static float fScale_Down_T1=1.0;
+	static float fScale_Down_T2=1.0;
+	if(i_xEn)
+	{
+		//进入印刷状态并且第一次压辊时,启动一次自调
+		if(i_xLocalAxisRollerDn && i_xFlag_Print && !xLocalAxisRollerDn_Pre)
+		{
+			//触发一次手动偏移自调
+			KSSetDataBit(i_puiSwitchAndState_OffsetCtl,1,4);
+		}
+		//某一路信号印刷过程中完全丢失，自动自调一次
+		if(i_xLocalAxisRollerDn && (i_byMaxRsData_T1<=5 || i_byMaxRsData_T2<=5 || i_byMinRsData_T1>=250 || i_byMinRsData_T2>=250))
+		{
+			//触发一次手动偏移自调
+			KSSetDataBit(i_puiSwitchAndState_OffsetCtl,1,4);
+		}
+		//获取上一次印刷状态和压辊状态
+		xLocalAxisRollerDn_Pre=i_xLocalAxisRollerDn;
+
+		xManu_OffsetCtl = KSGetDataBit(i_puiSwitchAndState_OffsetCtl,4) /*&& i_xFlag_Print*/;
+
+
+		if(xManu_OffsetCtl == 1)//手动开关打开或者自动进入
+		{
+			//偏移自调整周期 2000ms
+			if(uiCtlTime_OffsetAutoCtl>=iTimeCycle_OffsetCtl)
+			{
+				//T1
+				if(abs(uiBaseLine_Pre_T1-i_fBaseLine_T1)>=50)//基线震荡
+				{
+					fScale_Down_T1=fScale_Down_T1+2.0;
+					if(fScale_Down_T1>=10)
+						fScale_Down_T1=10;
+				}
+				//T2
+				if(abs(uiBaseLine_Pre_T2-i_fBaseLine_T2)>=50)//基线震荡
+				{
+					fScale_Down_T2=fScale_Down_T2+2.0;
+					if(fScale_Down_T2>=10)
+						fScale_Down_T2=10;
+				}
+				//T1
+				KS_OffsetAutoCtl(i_fBaseLine_T1,
+									i_pfOffset_T1,
+									i_uiBase_Tar_OffsetCtl,//目标基线
+									i_fKp_T1,//kp
+									i_fKd_T1,//kd
+									iTimeCycle_OffsetCtl,//调整周期
+									&iError_Pre_T1,
+									i_byMaxRsData_T1,
+									1,
+									fScale_Down_T1);
+				//T2
+				KS_OffsetAutoCtl(i_fBaseLine_T2,
+									i_pfOffset_T2,
+									i_uiBase_Tar_OffsetCtl,//目标基线
+									i_fKp_T2,//kp
+									//变量用错了@2026.8.4.181632+
+									//i_fKp_T2,//kd
+									i_fKd_T2,//kd
+									iTimeCycle_OffsetCtl,//调整周期
+									&iError_Pre_T2,
+									i_byMaxRsData_T2,
+									1,
+									fScale_Down_T2);
+
+				//清除计数
+				*i_puiCtlTime_OffsetAutoCtl=0;
+
+				//记录上次的基线值
+				uiBaseLine_Pre_T1=i_fBaseLine_T1;
+				uiBaseLine_Pre_T2=i_fBaseLine_T2;
+			}
+			//调整到误差10以内，持续3秒就自动退出
+			if(abs(i_fBaseLine_T1-i_uiBase_Tar_OffsetCtl)<=10 &&
+				abs(i_fBaseLine_T2-i_uiBase_Tar_OffsetCtl)<=10)
+			{
+				if(uiTime_xBaseDone_OffsetAutoCtl>=3000)
+				{
+					xManu_OffsetCtl=0;
+				}
+			}
+			else
+			{
+				//基线稳定了多久计数
+				*i_puiTime_xBaseDone_OffsetAutoCtl=0;
+				//本次调整持续超过10min或者压辊抬起来了,就强制退出
+				if(dwRemainTime_OffsetCtl>=600000 /*|| !i_xLocalAxisRollerDn*/)
+				{
+					xManu_OffsetCtl=0;
+				}
+			}
+
+			//写入到系参数中,发到屏幕上
+			KSSetDataBit(i_puiSwitchAndState_OffsetCtl,xManu_OffsetCtl,4);
+			//输出正在自调整标志
+			KSSetDataBit(i_puiSwitchAndState_OffsetCtl,1,9);
+
+		}
+		else
+		{
+			//清除计数
+			KSSetDataBit(i_puiSwitchAndState_OffsetCtl,0,9);
+			*i_puiCtlTime_OffsetAutoCtl=0;
+			*i_puiTime_xBaseDone_OffsetAutoCtl=0;
+			*i_pdwRemainTime_OffsetCtl=0;
+			fScale_Down_T1=1;
+			fScale_Down_T2=1;
+			//防止自动打开后第一次误判基线震荡
+			uiBaseLine_Pre_T1=i_fBaseLine_T1;
+			uiBaseLine_Pre_T2=i_fBaseLine_T2;
+		}
+	}
+	else
+	{
+		//清除计数
+		KSSetDataBit(i_puiSwitchAndState_OffsetCtl,0,9);
+		*i_puiCtlTime_OffsetAutoCtl=0;
+		*i_puiTime_xBaseDone_OffsetAutoCtl=0;
+		*i_pdwRemainTime_OffsetCtl=0;
+		fScale_Down_T1=1;
+		fScale_Down_T2=1;
+	}
+
+}
+
+
+//2025.12.01.163024//xi.hy//自动聚焦_光源自调整处理
+void KS_SourceLightAutoCtl(uint8_t i_xEn,//总使能
+				uint16_t i_uiPeakValue_T1,//T1当前波门内峰值
+				uint16_t i_uiPeakValue_T2,//T2当前波门内峰值
+				float* i_pfSourceLight_T1,//T1光源地址
+				float* i_pfSourceLight_T2,//T2光源地址
+				uint8_t* i_pbyRoundData_T1,//T1粗采样数据地址
+				uint8_t* i_pbyRoundData_T2,//T2粗采样数据地址
+				uint16_t* i_puiCtlTime_SourceLightCtl,//光源控制时间计数地址
+				float i_fGirth,//版周长
+				int16_t i_iGateSa,//波门地址
+				uint16_t i_uiGateWidthmm,//波门宽度
+				uint16_t i_uiSearchWidthmm,//查找宽度，不包含波门
+				uint8_t i_xFollowT1,//跟随T1有效幅值
+				uint8_t i_byBaseLine_T1,//T1基线
+				uint8_t i_byBaseLine_T2,//T2基线
+				float i_fKp,//光源调整kp
+				float i_fKd,//光源调整kd
+				uint16_t* i_puiTime_PeakDone_SourceAutoCtl,//光源控制到目标时间计数地址
+				uint32_t* i_pdwRemainTime_SourceCtl,//本次光源自调持续时间计数地址
+				uint8_t i_xFlag_Print,//印刷状态
+				uint16_t* i_puiResultFilter_PeakCur,//滤波后的当前峰值
+				uint8_t* i_pxFindRSPeak_SourceLightCtl,//允许从粗采样中查找峰值标志/必须在粗采样有效之后
+				uint16_t* i_puiSwitchAndState_SourceLightCtl//开关及状态地址
+				)
+{
+	if(i_xEn)
+	{
+		//局部变量定义
+		uint16_t uiSearchPoints=(uint16_t)(i_uiSearchWidthmm/i_fGirth*MAX_ROUND_POINT);//查找深度，不包含波门宽度
+		uint16_t uiSkipPoints=(uint16_t)(i_uiGateWidthmm/i_fGirth*MAX_ROUND_POINT);//跳过深度，即波门宽度
+		uint16_t uiIndexStart=0;//查找峰值的起始索引
+		uint16_t uiIndexEnd=0;////查找峰值的结束索引
+		uint8_t byPeakTar=0;
+		int16_t iN=0;
+		int16_t iTimeCycle_SourceLightCtl=2000;//控制周期2000ms
+		uint16_t uiResultFilter_PeakTar=0;//目标峰值滤波结果
+		uint16_t uiResultFilter_PeakCur=0;//当前峰值滤波结果
+		float* pfSourceLight_Cur=0;//当前要调整的光源
+		uint16_t uiCtlTime_SourceLightCtl=*i_puiCtlTime_SourceLightCtl;//当前控制时间
+		uint16_t uiTime_PeakDone_SourceAutoCtl=*i_puiTime_PeakDone_SourceAutoCtl;//调整到目标值附近稳定了多久计数
+		uint32_t dwRemainTime_SourceCtl=*i_pdwRemainTime_SourceCtl;//本次调整持续了多久计数
+		uint8_t byRoundData_Temp=0;//粗采样数据临时保存
+		uint8_t xFindRSPeak_SourceLightCtl=*i_pxFindRSPeak_SourceLightCtl;//允许从粗采样中查找峰值标志/必须在粗采样有效之后
+		static uint8_t abyPeakTar_Filter[byDepthFilter_SourceLightCtl];//目标峰值滤波数组
+		static uint8_t byIndexFilter_PeakTar;//目标峰值滤波数组索引
+		static uint8_t byCountFilter_PeakTar;//目标峰值滤波计数
+		static uint8_t abyPeakCur_Filter[byDepthFilter_SourceLightCtl];//当前峰值滤波数组
+		static uint8_t byIndexFilter_PeakCur;//目标峰值滤波数组索引
+		static uint8_t byCountFilter_PeakCur;//目标峰值滤波计数
+		static uint8_t byPeakCur;
+		static int16_t iError_Pre;//上次偏差值
+		static uint8_t xAuto_Focus;//自动聚焦开关
+
+
+		xAuto_Focus = KSGetDataBit(i_puiSwitchAndState_SourceLightCtl,5) && i_xFlag_Print;//获取自动聚焦开关
+		if(xAuto_Focus)
+		{
+			//输出自动聚焦中标志
+			KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,1,11);
+			//处理一下该过程的偏移调整
+			//任意一路基线被限幅或者太高都要调整偏移，认为此刻有效幅值是不准的
+			if(i_byBaseLine_T1<=0 || i_byBaseLine_T1>50 || i_byBaseLine_T2<=0 || i_byBaseLine_T2>50)
+			{
+				//触发一次手动偏移自调
+				KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,1,4);
+				//清除一些标志
+				KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,0,10);//光源自调中标志
+				memset(abyPeakTar_Filter,0,sizeof(abyPeakTar_Filter));
+				memset(abyPeakCur_Filter,0,sizeof(abyPeakCur_Filter));
+				byIndexFilter_PeakTar=0;
+				byCountFilter_PeakTar=0;
+				byIndexFilter_PeakCur=0;
+				byCountFilter_PeakCur=0;
+				iError_Pre=0;
+				*i_puiCtlTime_SourceLightCtl=0;
+				*i_puiTime_PeakDone_SourceAutoCtl=0;
+				*i_pdwRemainTime_SourceCtl=0;
+			}
+			else//基线是有效值才调整光源
+			{
+				//输出光源自调中标志
+				KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,1,10);
+				if(i_xFollowT1)//以T1波门内峰值为目标,从波门往后找
+				{
+					if(xFindRSPeak_SourceLightCtl)//粗采样更新了，才允许查找峰值
+					{
+						uiIndexStart=i_iGateSa+uiSkipPoints;//跳过波门的起始索引
+						uiIndexEnd=uiIndexStart+uiSearchPoints;//理论上仅包含了后一个色标的结束索引
+						if(uiIndexEnd>=MAX_ROUND_POINT)//超出了就修正为数组末尾
+						{
+							uiIndexEnd=MAX_ROUND_POINT-1;
+						}
+						//当前峰值查找,往后找
+						byPeakCur=0;
+						for(iN=uiIndexStart;iN<=uiIndexEnd;iN++)
+						{
+							byRoundData_Temp=RSDATADEAL(i_pbyRoundData_T2[iN]);//双极性处理后的数据
+							if(byRoundData_Temp>byPeakCur)
+								byPeakCur=byRoundData_Temp;
+						}
+						byPeakCur=byPeakCur-i_byBaseLine_T2;//看的是有效幅值
+						//清除可以查找粗采样峰值的标志
+						*i_pxFindRSPeak_SourceLightCtl=0;
+					}
+					byPeakTar=(uint8_t)(i_uiPeakValue_T1/256)-i_byBaseLine_T1;//目标峰值为T1
+					pfSourceLight_Cur=i_pfSourceLight_T2;//调整T2
+
+				}
+				else//以T2波门内峰值为目标，从波门往前找
+				{
+					if(xFindRSPeak_SourceLightCtl)//粗采样更新了，才允许查找峰值
+					{
+						uiIndexStart=i_iGateSa;//向左找无需跳过波门
+						//2026.8.4.182108+ 有下限溢出的风险。	
+						if(uiIndexStart > uiSearchPoints)							
+							uiIndexEnd=uiIndexStart-uiSearchPoints;//理论上仅包含了前一个色标的结束索引
+						else
+							uiIndexEnd=1;//为下面的循环做处理
+						//bug代码@2026.8.4.182246屏蔽 by liu.yt
+						//uiIndexEnd=uiIndexStart-uiSearchPoints;//理论上仅包含了前一个色标的结束索引
+						//if(uiIndexEnd<=0)
+						//{
+						//	uiIndexEnd=1;//为下面的循环做处理
+						//}
+						
+						
+						//当前峰值查找,往前找
+						byPeakCur=0;
+						for(iN=uiIndexStart;iN>=uiIndexEnd;iN--)
+						{
+							byRoundData_Temp=RSDATADEAL(i_pbyRoundData_T1[iN]);//双极性处理后的数据
+							if(byRoundData_Temp>byPeakCur)
+								byPeakCur=byRoundData_Temp;
+						}
+						byPeakCur=byPeakCur-i_byBaseLine_T1;//看的是有效幅值
+						//清除可以查找粗采样峰值的标志
+						*i_pxFindRSPeak_SourceLightCtl=0;
+					}
+					byPeakTar=(uint8_t)(i_uiPeakValue_T2/256)-i_byBaseLine_T2;//目标峰值为T2
+					pfSourceLight_Cur=i_pfSourceLight_T1;//调整T1
+				}
+				//时间到了就调整光源
+				if(uiCtlTime_SourceLightCtl>=iTimeCycle_SourceLightCtl)
+				{
+					//目标峰值滤波
+					abyPeakTar_Filter[byIndexFilter_PeakTar]=byPeakTar;
+					byIndexFilter_PeakTar=(byIndexFilter_PeakTar+1)%byDepthFilter_SourceLightCtl;
+					if(byCountFilter_PeakTar<byDepthFilter_SourceLightCtl)
+						byCountFilter_PeakTar++;
+					uiResultFilter_PeakTar=0;
+					for(iN=0;iN<byCountFilter_PeakTar;iN++)
+						uiResultFilter_PeakTar+=abyPeakTar_Filter[iN];
+					uiResultFilter_PeakTar=uiResultFilter_PeakTar/byCountFilter_PeakTar;
+					//当前峰值滤波
+ 					abyPeakCur_Filter[byIndexFilter_PeakCur]=byPeakCur;
+					byIndexFilter_PeakCur=(byIndexFilter_PeakCur+1)%byDepthFilter_SourceLightCtl;
+					if(byCountFilter_PeakCur<byDepthFilter_SourceLightCtl)
+						byCountFilter_PeakCur++;
+					uiResultFilter_PeakCur=0;
+					for(iN=0;iN<byCountFilter_PeakCur;iN++)
+						uiResultFilter_PeakCur+=abyPeakCur_Filter[iN];
+					uiResultFilter_PeakCur=uiResultFilter_PeakCur/byCountFilter_PeakCur;
+
+					//将当前值输出出去,用于界面调试
+					*i_puiResultFilter_PeakCur=uiResultFilter_PeakCur;
+					//光源调整
+					KS_OffsetAutoCtl(uiResultFilter_PeakCur,
+										pfSourceLight_Cur,
+										uiResultFilter_PeakTar,//目标
+										i_fKp,//kp
+										i_fKd,//kd
+										iTimeCycle_SourceLightCtl,//调整周期
+										&iError_Pre,
+										0,
+										0,
+										0);
+
+					*i_puiCtlTime_SourceLightCtl=0;//重置控制计数
+				}
+				//调整到误差2以内，持续五秒就自动退出
+				if(abs(uiResultFilter_PeakCur-uiResultFilter_PeakTar)<=2)
+				{
+					if(uiTime_PeakDone_SourceAutoCtl>=5000)
+					{
+						KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,0,5);
+					}
+				}
+				else
+				{
+					//峰值稳定了多久计数
+					*i_puiTime_PeakDone_SourceAutoCtl=0;
+					//本次调整持续超过10min,就强制退出
+					if(dwRemainTime_SourceCtl>=600000)
+					{
+						KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,0,5);
+					}
+				}
+			}
+		}
+		else
+		{
+			//清除一些标志
+			KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,0,11);
+			KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,0,10);
+			memset(abyPeakTar_Filter,0,sizeof(abyPeakTar_Filter));
+			memset(abyPeakCur_Filter,0,sizeof(abyPeakCur_Filter));
+			byIndexFilter_PeakTar=0;
+			byCountFilter_PeakTar=0;
+			byIndexFilter_PeakCur=0;
+			byCountFilter_PeakCur=0;
+			iError_Pre=0;
+			*i_puiCtlTime_SourceLightCtl=0;
+			*i_puiTime_PeakDone_SourceAutoCtl=0;
+			*i_pdwRemainTime_SourceCtl=0;
+			*i_pxFindRSPeak_SourceLightCtl=0;
+		}
+
+	}
+	else
+	{
+		//清除一些标志
+		KSSetDataBit(i_puiSwitchAndState_SourceLightCtl,0,10);
+		*i_puiCtlTime_SourceLightCtl=0;
+		*i_puiTime_PeakDone_SourceAutoCtl=0;
+		*i_pdwRemainTime_SourceCtl=0;
+		*i_pxFindRSPeak_SourceLightCtl=0;
+	}
+}
+
+
+//2025.11.28.161834//xi.hy//月光宝盒Pro 自动聚焦处理
+void KS_AutoFocusCtl_MoonPro(uint8_t i_xEn,
+							StGrpParam* i_pstStGrpParam,
+							StAxisParam* i_pstStAxisParam,
+							StGlobalParam* i_pstStGlobalParam,
+							uint8_t* i_pbyRoundData1,				//粗采样T1_R起始地址
+							uint8_t* i_pbyRoundData2,				//粗采样T2_R起始地址
+							uint8_t* i_pbyRoundData3,				//粗采样T1_G起始地址
+							uint8_t* i_pbyRoundData4,				//粗采样T2_G起始地址
+							uint8_t* i_pbyRoundData5,				//粗采样T1_B起始地址
+							uint8_t* i_pbyRoundData6,				//粗采样T2_B起始地址
+							uint8_t* i_pxFindRSPeak_SourceLightCtl, //允许从粗采样中查找峰值标志/必须在粗采样有效之后
+							uint16_t* i_puiCtlTime_OffsetAutoCtl,//偏移自调控制时间计数
+							uint16_t* i_puiTime_xBaseDone_OffsetAutoCtl,//基线稳定多久计数
+							uint32_t* i_pdwRemainTime_OffsetCtl,//本次调整持续时间计数
+							uint16_t* i_puiCtlTime_SourceLightCtl,//光源控制时间计数地址
+							uint16_t* i_puiTime_PeakDone_SourceAutoCtl,//光源控制到目标时间计数地址
+							uint32_t* i_pdwRemainTime_SourceCtl)//本次光源自调持续时间计数地址
+{
+	if(i_xEn)
+	{
+		//局部变量定义
+		uint8* pbyRoundData_T1;//T1当前粗采样
+		uint8* pbyRoundData_T2;//T2当前粗采样
+		uint8_t bySignalSelect_T1;//T1当前通道选择
+		uint8_t bySignalSelect_T2;//T2当前通道选择
+		uint8_t byMinRsData_T1;//T1粗采样最小值
+		uint8_t byMinRsData_T2;//T2粗采样最小值
+		uint8_t byMaxRsData_T1;//T1粗采样最大值
+		uint8_t byMaxRsData_T2;//T2粗采样最大值
+
+		//2025.12.01.160130//xi.hy//光源自调整
+		bySignalSelect_T1 = GET_CUR_CHANNEL_RGB(i_pstStGlobalParam->bySignalSelect,1);//T1当前通道选择
+		bySignalSelect_T2 = GET_CUR_CHANNEL_RGB(i_pstStGlobalParam->bySignalSelect,2);//T2当前通道选择
+
+		//获取当前使用的粗采样
+		if(bySignalSelect_T1==CURR_VISU_G) //选择的是G通道
+		{
+			pbyRoundData_T1=i_pbyRoundData3;
+			byMinRsData_T1=i_pstStGlobalParam->byMinRsData_T1G;
+			byMaxRsData_T1=i_pstStGlobalParam->byMaxRsData_T1G;
+		}
+		else if(bySignalSelect_T1==CURR_VISU_B)//选择的是B通道
+		{
+			pbyRoundData_T1=i_pbyRoundData5;
+			byMinRsData_T1=i_pstStGlobalParam->byMinRsData_T1B;
+			byMaxRsData_T1=i_pstStGlobalParam->byMaxRsData_T1B;
+		}
+		else//默认R通道
+		{
+			pbyRoundData_T1=i_pbyRoundData1;
+			byMinRsData_T1=i_pstStGlobalParam->byMinRsData_T1R;
+			byMaxRsData_T1=i_pstStGlobalParam->byMaxRsData_T1R;
+		}
+
+		if(bySignalSelect_T2==CURR_VISU_G) //选择的是G通道
+		{
+			pbyRoundData_T2=i_pbyRoundData4;
+			byMinRsData_T2=i_pstStGlobalParam->byMinRsData_T2G;
+			byMaxRsData_T2=i_pstStGlobalParam->byMaxRsData_T2G;
+		}
+		else if(bySignalSelect_T2==CURR_VISU_B)//选择的是B通道
+		{
+			pbyRoundData_T2=i_pbyRoundData6;
+			byMinRsData_T2=i_pstStGlobalParam->byMinRsData_T2B;
+			byMaxRsData_T2=i_pstStGlobalParam->byMaxRsData_T2B;
+		}
+		else//默认R通道
+		{
+			pbyRoundData_T2=i_pbyRoundData2;
+			byMinRsData_T2=i_pstStGlobalParam->byMinRsData_T2R;
+			byMaxRsData_T2=i_pstStGlobalParam->byMaxRsData_T2R;
+		}
+
+
+		//2025.11.28.115047//xi.hy//自动聚焦_偏移自调整
+		KS_OffsetAutoCtl_T1T2(1,//调整使能
+				i_pstStAxisParam->xLocalAxisRollerDn,//压辊状态
+				&i_pstStGlobalParam->uiSomeCtlBit_RW,//偏移自调的开关及状态
+				i_pstStGrpParam->xFlag_Print,//印刷状态
+				i_pstStGrpParam->lrVelocity,//轴速度
+				i_pstStAxisParam->lrGirth,//版周长
+				i_puiCtlTime_OffsetAutoCtl,//偏移自调控制时间计数
+									128,//目标基线
+				i_pstStGlobalParam->fBaseLine_T1_OffsetCtl,//T1基线
+				i_pstStGlobalParam->fBaseLine_T2_OffsetCtl,//T2基线
+				&i_pstStGlobalParam->rOffset_T1,//T1偏移
+				&i_pstStGlobalParam->rOffset_T2,//T2偏移
+									0.0002,//kp_T1
+									0.0002,//kd_T1
+									0.0002,//kp_T2
+									0.0002,//kd_T2
+							byMinRsData_T1,//T1粗采样最小值
+							byMinRsData_T2,//T2粗采样最小值
+							byMaxRsData_T1,//T1粗采样最大值
+							byMaxRsData_T2,//T2粗采样最大值
+				i_puiTime_xBaseDone_OffsetAutoCtl,//基线稳定多久计数
+				i_pdwRemainTime_OffsetCtl//本次调整持续时间计数
+				);
+
+
+		//自动聚焦_光源自调整处理
+		KS_SourceLightAutoCtl(1,//总使能
+						i_pstStAxisParam->uiPeakValue_t1,//T1当前波门内峰值
+						i_pstStAxisParam->uiPeakValue_t2,//T2当前波门内峰值
+						&i_pstStGlobalParam->rSource_Light_T1,//T1光源地址
+						&i_pstStGlobalParam->rSource_Light_T2,//T2光源地址
+						pbyRoundData_T1,//T1粗采样数据地址
+						pbyRoundData_T2,//T2粗采样数据地址
+						i_puiCtlTime_SourceLightCtl,//光源控制时间计数地址
+						i_pstStAxisParam->lrGirth,//版周长
+						i_pstStAxisParam->iGateSa,//波门地址
+						i_pstStAxisParam->iGateWidthPhy,//波门宽度
+						20,//查找宽度mm，不包含波门
+						1,//=1：跟随T1有效幅值 =0:跟随T2
+						i_pstStGlobalParam->fBaseLine_T1,//T1基线
+						i_pstStGlobalParam->fBaseLine_T2,//T2基线
+						0.0002,//光源调整kp
+						0.0005,//光源调整kd
+						i_puiTime_PeakDone_SourceAutoCtl,//光源控制到目标稳定时间计数地址
+						i_pdwRemainTime_SourceCtl,//本次光源自调持续时间计数地址
+						i_pstStGrpParam->xFlag_Print,//印刷状态
+						&i_pstStAxisParam->uiPeakCur_AutoFocus,//滤波后的当前峰值
+						i_pxFindRSPeak_SourceLightCtl,//允许从粗采样中查找峰值标志/必须在粗采样有效之后
+						&i_pstStGlobalParam->uiSomeCtlBit_RW//开关及状态地址
+						);
+	}
+}
+
+
+

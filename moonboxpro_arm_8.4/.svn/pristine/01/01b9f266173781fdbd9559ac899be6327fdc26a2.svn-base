@@ -1,0 +1,9 @@
+../RingNetDll/StRingNetExta.c:29:7:RingNetRstSlaverReg	8	static
+../RingNetDll/StRingNetExta.c:25:7:RingNetInitial	0	static
+../RingNetDll/StRingNetExta.c:16:7:RingNetInitialSlaver	0	static
+../RingNetDll/StRingNetExta.c:71:7:RN_UserPCWrNetFPGA	560	static
+../RingNetDll/StRingNetExta.c:137:7:RN_UserPCRdLocalFPGA	20	static
+../RingNetDll/StRingNetExta.c:193:7:RingNetPCWatchCom	552	static
+../RingNetDll/StRingNetExta.c:251:7:RingNetMailRdMultReg	552	static
+../RingNetDll/StRingNetExta.c:305:7:RingNetVersion	0	static
+../RingNetDll/StRingNetExta.c:316:7:RingNetGetVersion	0	static

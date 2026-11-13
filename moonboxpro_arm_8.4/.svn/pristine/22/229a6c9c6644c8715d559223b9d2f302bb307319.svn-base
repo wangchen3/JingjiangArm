@@ -1,0 +1,45 @@
+################################################################################
+# Automatically-generated file. Do not edit!
+# Toolchain: GNU Tools for STM32 (13.3.rel1)
+################################################################################
+
+# Add inputs and outputs from these tool invocations to the build variables 
+C_SRCS += \
+../RingNetDll/PCIOperate.c \
+../RingNetDll/RingNet.c \
+../RingNetDll/StFileOp.c \
+../RingNetDll/StPCComRam.c \
+../RingNetDll/StRingNet.c \
+../RingNetDll/StRingNetExta.c \
+../RingNetDll/StSample.c 
+
+OBJS += \
+./RingNetDll/PCIOperate.o \
+./RingNetDll/RingNet.o \
+./RingNetDll/StFileOp.o \
+./RingNetDll/StPCComRam.o \
+./RingNetDll/StRingNet.o \
+./RingNetDll/StRingNetExta.o \
+./RingNetDll/StSample.o 
+
+C_DEPS += \
+./RingNetDll/PCIOperate.d \
+./RingNetDll/RingNet.d \
+./RingNetDll/StFileOp.d \
+./RingNetDll/StPCComRam.d \
+./RingNetDll/StRingNet.d \
+./RingNetDll/StRingNetExta.d \
+./RingNetDll/StSample.d 
+
+
+# Each subdirectory must supply rules for building sources it contributes
+RingNetDll/%.o RingNetDll/%.su RingNetDll/%.cyclo: ../RingNetDll/%.c RingNetDll/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F412Zx -DSTM32F40_41xxx -DUSE_STDPERIPH_DRIVER -DDEBUG_ENABLE_SEMIHOST -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_Comm" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/RingNetDll" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/SYSTEM" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Core" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_Process" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_Visu" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/UPdate" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers/CMSIS" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers/CMSIS/Include" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Drivers/CMSIS/Device/ST/STM32F4xx/Include" -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Modbus485_Master" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_KSCR" -I"C:/Users/yuntao.liu/Desktop/V10-remote@2025.10.22/PLC_PRG-V10/ARM/moonboxpro/Kesai_calcArcErr" -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+clean: clean-RingNetDll
+
+clean-RingNetDll:
+	-$(RM) ./RingNetDll/PCIOperate.cyclo ./RingNetDll/PCIOperate.d ./RingNetDll/PCIOperate.o ./RingNetDll/PCIOperate.su ./RingNetDll/RingNet.cyclo ./RingNetDll/RingNet.d ./RingNetDll/RingNet.o ./RingNetDll/RingNet.su ./RingNetDll/StFileOp.cyclo ./RingNetDll/StFileOp.d ./RingNetDll/StFileOp.o ./RingNetDll/StFileOp.su ./RingNetDll/StPCComRam.cyclo ./RingNetDll/StPCComRam.d ./RingNetDll/StPCComRam.o ./RingNetDll/StPCComRam.su ./RingNetDll/StRingNet.cyclo ./RingNetDll/StRingNet.d ./RingNetDll/StRingNet.o ./RingNetDll/StRingNet.su ./RingNetDll/StRingNetExta.cyclo ./RingNetDll/StRingNetExta.d ./RingNetDll/StRingNetExta.o ./RingNetDll/StRingNetExta.su ./RingNetDll/StSample.cyclo ./RingNetDll/StSample.d ./RingNetDll/StSample.o ./RingNetDll/StSample.su
+
+.PHONY: clean-RingNetDll
+
