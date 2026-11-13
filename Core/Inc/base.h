@@ -80,8 +80,8 @@
 //重要~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
-#define DWVERSION 4126111216
-//在0421版基础上移植新飞点剔除(Theil-Sen)+双置信度融合(wang.c/Yang.zj 2026.11.9~11.10)
+#define DWVERSION 4126111311
+//在0421版基础上移植新飞点剔除(Theil-Sen)+双置信度融合(wang.c/Yang.zj 2026.11.9~11.10) 1113改动 解除误差屏蔽
 //移植内容:Kesai_Process新增ks_fly_remove/ks_conf_err,calcerr/ProSample/VISU挂接(编译须用Release配置,镜像≤128KB)
 //未移植:全自动套印(markDetection/36#37#通讯/模版)等6~8月改动
 

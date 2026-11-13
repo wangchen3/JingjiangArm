@@ -2002,15 +2002,15 @@ void KS_ShowId_DigitalTubes(uint16_t i_uiStationId,//站号
  				//2026.4.21.154136屏蔽
 // 				if(i_pstStAxisParam->xFlag_CalcErr_New==0)
 // 				{
-//					pstStCMD_05->iVerror_FollowPreUnit=i_pstStAxisParam->aiVerror_Gate[0];
-//					pstStCMD_05->iVerror_Follow1Unit=i_pstStAxisParam->aiVerror_Gate[1];
-//					//pstStCMD_05->iHerror_FollowPreUnit=i_pstStAxisParam->aiHerror_Gate[0];
-//					//pstStCMD_05->iHerror_Follow1Unit=i_pstStAxisParam->aiHerror_Gate[1];
+					pstStCMD_05->iVerror_FollowPreUnit=i_pstStAxisParam->aiVerror_Gate[0];
+					pstStCMD_05->iVerror_Follow1Unit=i_pstStAxisParam->aiVerror_Gate[1];
+					//pstStCMD_05->iHerror_FollowPreUnit=i_pstStAxisParam->aiHerror_Gate[0];
+					//pstStCMD_05->iHerror_Follow1Unit=i_pstStAxisParam->aiHerror_Gate[1];
 // 				}
 // 				else
 // 				{// 新增通讯
-					pstStCMD_05->iVerror_FollowPreUnit=i_pstStAxisParam->iResult_V_Followpre;
-					pstStCMD_05->iVerror_Follow1Unit=i_pstStAxisParam->iResult_V_Follow_1U;
+					//pstStCMD_05->iVerror_FollowPreUnit=i_pstStAxisParam->iResult_V_Followpre;
+					//pstStCMD_05->iVerror_Follow1Unit=i_pstStAxisParam->iResult_V_Follow_1U;
 					//pstStCMD_05->iHerror_FollowPreUnit=i_pstStAxisParam->iResult_H_Followpre;
 					//pstStCMD_05->iHerror_Follow1Unit=i_pstStAxisParam->iResult_H_Follow_1U;
 					//2026.4.21.154229 屏蔽
